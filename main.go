@@ -35,12 +35,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("error writing syn packet: %v", err)
 	}
-	reply := make([]byte, 1024)
-	n, err := tun.Read(reply)
-	if err != nil {
-		log.Fatalf("error reading reply: %v", err)
+
+	for {
+		reply, err := readWithTimeout(tun, 1024, 1)
+		if err != nil {
+			log.Fatalf("error reading with timeout: %v", err)
+		}
+		fmt.Printf("reply: %q", reply)
 	}
-	fmt.Printf("reply: %q", reply[:n])
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -72,7 +74,7 @@ func openTun(tunName string) (*os.File, error) {
 	return tun, nil
 }
 
-func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) error {
+func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) ([]byte, error) {
 	if timeout == 0 {
 		timeout = 1000 * time.Millisecond
 	}
@@ -93,19 +95,36 @@ func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) error {
 	select {
 	case receivedData := <-tunDataChan:
 		if receivedData == nil {
-			return fmt.Errorf("error reading with timeout")
+			return nil, fmt.Errorf("error reading with timeout")
 		}
 		fmt.Printf("Data received: %v\n", receivedData)
-		return nil
+		return receivedData, nil
 	case <-time.After(timeout):
 		fmt.Println("Timeout reached")
-		return fmt.Errorf("timeout reached")
+		return nil, fmt.Errorf("timeout reached")
 	}
 }
 
-/* Running questions
-openTun
-- What is this /dev/net/tun file _exactly_?
-- What is `ioctl`: A catch all Linux sys call for unrelated things...
-- What is a `tun` device
-*/
+type IPv4 struct {
+	// TCP version. Always 4.
+	// IHL is the header length divided by 4.
+	// Without options 20/4=5, so this can be hardcoded.
+	// Combined into one field since they're both the same byte and always the same.
+	versIHL int
+	//
+	tos int
+	// Total length of the IPv4 header + data after the header.
+	totalLength int
+	// Identification
+	id int
+	// Fragment offset, used for handling IP fragmentation.
+	fragOff int
+	// Time to live. Number of hops before it should give up on routing.
+	ttl      int
+	protocol int
+	checksum int
+	// source IP address
+	src []byte
+	// destination IP address
+	dst []byte
+}
