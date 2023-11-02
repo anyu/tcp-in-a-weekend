@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 	"unsafe"
 
 	"syscall"
@@ -23,7 +24,7 @@ const (
 )
 
 func main() {
-	tun, err := openTun("tun0")
+	tun, err := openTun("tun0") // TODO: tun0 (the VPN interface?)
 	if err != nil {
 		log.Fatalf("error opening tunnel: %v", tun)
 	}
@@ -59,7 +60,7 @@ func openTun(tunName string) (*os.File, error) {
 
 	binary.LittleEndian.PutUint16(ifr[16:], flags)
 
-	// the sys call returns an error number (errno) of 0 if success ful
+	// the sys call returns an error number (errno) of 0 if successful
 	// Fd() = get file descriptor
 	// We pass a pointer to the ifr []byte to let the syscall access the data stored there.
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(tun.Fd()), uintptr(LINUX_TUNSETIFF), uintptr(unsafe.Pointer(&ifr[0])))
@@ -69,6 +70,37 @@ func openTun(tunName string) (*os.File, error) {
 	}
 
 	return tun, nil
+}
+
+func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = 1000 * time.Millisecond
+	}
+	tunData := make([]byte, numBytes)
+
+	tunDataChan := make(chan []byte, 1)
+
+	go func() {
+		n, err := tun.Read(tunData)
+		if err != nil {
+			fmt.Printf("error reading with timeout: %v", err)
+			tunDataChan <- nil
+		} else {
+			tunDataChan <- tunData[:n]
+		}
+	}()
+
+	select {
+	case receivedData := <-tunDataChan:
+		if receivedData == nil {
+			return fmt.Errorf("error reading with timeout")
+		}
+		fmt.Printf("Data received: %v\n", receivedData)
+		return nil
+	case <-time.After(timeout):
+		fmt.Println("Timeout reached")
+		return fmt.Errorf("timeout reached")
+	}
 }
 
 /* Running questions
