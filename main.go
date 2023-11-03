@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -251,30 +250,15 @@ func (i ICMPEcho) toBytes() []byte {
 	return buf
 }
 
-func icmpFromBytes(s string) (ICMPEcho, error) {
-	icmp := ICMPEcho{}
-	r := bytes.NewReader([]byte(s))
+func icmpFromBytes(data []byte) (ICMPEcho, error) {
+	var icmp ICMPEcho
 
-	err := binary.Read(r, binary.BigEndian, &icmp.Type)
-	if err != nil {
-		return ICMPEcho{}, err
-	}
-	err = binary.Read(r, binary.BigEndian, &icmp.Code)
-	if err != nil {
-		return ICMPEcho{}, err
-	}
-	err = binary.Read(r, binary.BigEndian, &icmp.Checksum)
-	if err != nil {
-		return ICMPEcho{}, err
-	}
-	err = binary.Read(r, binary.BigEndian, &icmp.ID)
-	if err != nil {
-		return ICMPEcho{}, err
-	}
-	err = binary.Read(r, binary.BigEndian, &icmp.Seq)
-	if err != nil {
-		return ICMPEcho{}, err
-	}
+	icmp.Type = data[0]
+	icmp.Code = data[1]
+	icmp.Checksum = binary.BigEndian.Uint16(data[2:4])
+	icmp.ID = binary.BigEndian.Uint16(data[4:6])
+	icmp.Seq = binary.BigEndian.Uint16(data[6:8])
+
 	return icmp, nil
 }
 
