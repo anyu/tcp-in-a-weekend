@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"time"
 	"unsafe"
@@ -31,6 +32,22 @@ func main() {
 	defer tun.Close()
 
 	synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
+
+	ipv4 := IPv4{
+		versIHL:     4<<4 | 5,
+		tos:         0,
+		totalLength: 28,
+		id:          1,
+		fragOff:     0,
+		ttl:         16,
+		protocol:    6,
+		checksum:    0,
+		src:         []byte{192, 168, 0, 1},
+		dest:        []byte{8, 8, 8, 8},
+	}
+	output := ipv4.toBytes()
+	fmt.Printf("output: %q", output)
+
 	_, err = tun.Write(synPacket)
 	if err != nil {
 		log.Fatalf("error writing syn packet: %v", err)
@@ -113,21 +130,42 @@ type IPv4 struct {
 	// IHL is the header length divided by 4.
 	// Without options 20/4=5, so this can be hardcoded.
 	// Combined into one field since they're both the same byte and always the same.
-	versIHL int
+	versIHL uint8
 	//
-	tos int
+	tos uint8
 	// Total length of the IPv4 header + data after the header.
-	totalLength int
+	totalLength uint16
 	// Identification
-	id int
+	id uint16
 	// Fragment offset, used for handling IP fragmentation.
-	fragOff int
+	fragOff uint16
 	// Time to live. Number of hops before it should give up on routing.
-	ttl      int
-	protocol int
-	checksum int
-	// source IP address
-	src []byte
+	ttl      uint8
+	protocol uint8
+	checksum uint16
+	// source IP address (an IP is 4 bytes)
+	src net.IP
 	// destination IP address
-	dst []byte
+	dest net.IP
+}
+
+func (i *IPv4) toBytes() []byte {
+	// We can create a fixed-size byte slice of 20 bytes since the IPv4 fields sum up to 20 bytes.
+	buf := make([]byte, 20)
+	buf[0] = i.versIHL
+	buf[1] = i.tos
+	binary.BigEndian.PutUint16(buf[2:4], i.totalLength)
+	binary.BigEndian.PutUint16(buf[4:6], i.id)
+	binary.BigEndian.PutUint16(buf[6:8], i.fragOff)
+	buf[8] = i.ttl
+	buf[9] = i.protocol
+	binary.BigEndian.PutUint16(buf[10:12], i.checksum)
+
+	srcIP := i.src.To4() // To4() converts the ip to 4 bytes.
+	destIP := i.dest.To4()
+
+	copy(buf[12:16], srcIP)
+	copy(buf[16:20], destIP)
+
+	return buf
 }
