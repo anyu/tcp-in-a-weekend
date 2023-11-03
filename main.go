@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -30,6 +31,9 @@ func main() {
 		log.Fatalf("error opening tunnel: %v", err)
 	}
 	defer tun.Close()
+
+	p := ping()
+	fmt.Printf("p: %q", p)
 
 	synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
 
@@ -221,3 +225,71 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 	ipv4.checksum = getChecksum(ipv4.toBytes())
 	return ipv4
 }
+
+// ICMP packets have an 8-byte header and variable-sized data section
+type ICMPEcho struct {
+	// Type identifies whether the packet is an echo (ping) or an echo reply (ping reply)
+	Type uint8
+	// Code is always 0 (TODO: given id/seq conditions though, could it ever be not 0?)
+	Code uint8
+	// Checksum is used to verify the integrity of the packet
+	Checksum uint16
+	// ID is used to help match echoes and replies, if the code field is 0
+	ID uint16
+	// Seq is used to help match echoes and replies, if the code field is 0
+	Seq uint16
+}
+
+func (i ICMPEcho) toBytes() []byte {
+	buf := make([]byte, 8)
+	buf[0] = i.Type
+	buf[1] = i.Code
+	binary.BigEndian.PutUint16(buf[2:4], i.Checksum)
+	binary.BigEndian.PutUint16(buf[4:6], i.ID)
+	binary.BigEndian.PutUint16(buf[6:8], i.Seq)
+
+	return buf
+}
+
+func icmpFromBytes(s string) (ICMPEcho, error) {
+	icmp := ICMPEcho{}
+	r := bytes.NewReader([]byte(s))
+
+	err := binary.Read(r, binary.BigEndian, &icmp.Type)
+	if err != nil {
+		return ICMPEcho{}, err
+	}
+	err = binary.Read(r, binary.BigEndian, &icmp.Code)
+	if err != nil {
+		return ICMPEcho{}, err
+	}
+	err = binary.Read(r, binary.BigEndian, &icmp.Checksum)
+	if err != nil {
+		return ICMPEcho{}, err
+	}
+	err = binary.Read(r, binary.BigEndian, &icmp.ID)
+	if err != nil {
+		return ICMPEcho{}, err
+	}
+	err = binary.Read(r, binary.BigEndian, &icmp.Seq)
+	if err != nil {
+		return ICMPEcho{}, err
+	}
+	return icmp, nil
+}
+
+func ping() []byte {
+	icmp := ICMPEcho{
+		Type:     8,
+		Code:     0,
+		Checksum: 0,
+		ID:       12345,
+		Seq:      1, // could make a param later
+	}
+	icmp.Checksum = getChecksum(icmp.toBytes())
+	return icmp.toBytes()
+}
+
+/* MISC
+- When using %q directive, 8 becomes \b, instead of x08 in hex
+*/
