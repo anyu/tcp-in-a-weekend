@@ -33,6 +33,7 @@ func main() {
 
 	synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
 
+	// test
 	ipv4 := IPv4{
 		versIHL:     4<<4 | 5,
 		tos:         0,
@@ -128,7 +129,7 @@ func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) ([]byte, err
 type IPv4 struct {
 	// TCP version. Always 4.
 	// IHL is the header length divided by 4.
-	// Without options 20/4=5, so this can be hardcoded.
+	// The header length is 20 (assuming no options), so we can hardcode the IHL to 20/4=5.
 	// Combined into one field since they're both the same byte and always the same.
 	versIHL uint8
 	//
@@ -140,8 +141,11 @@ type IPv4 struct {
 	// Fragment offset, used for handling IP fragmentation.
 	fragOff uint16
 	// Time to live. Number of hops before it should give up on routing.
-	ttl      uint8
+	ttl uint8
+	// Protocol specifies the protocol used in the data part of the IP packet.
+	// 6 for TCP, 17 for UDP, 1 for ICMP
 	protocol uint8
+	// Checksum calculated from the entire IP header used to confirm integrity upon receival.
 	checksum uint16
 	// source IP address (an IP is 4 bytes)
 	src net.IP
@@ -168,4 +172,52 @@ func (i *IPv4) toBytes() []byte {
 	copy(buf[16:20], destIP)
 
 	return buf
+}
+
+func getChecksum(data []byte) uint16 {
+	// add padding to ensure even number of bytes
+	if len(data)%2 == 1 {
+		data = append(data, 0x00)
+	}
+
+	var result uint32
+	for i := 0; i < len(data); i += 2 {
+
+		part := binary.BigEndian.Uint16(data[i : i+2])
+		result += uint32(part)
+		// Ensure result doesn't exceed 2^16-1 (max uint16 value)
+		upper16Bits := result >> 16
+		lower16Bits := result & 0xFFFF
+		result = upper16Bits + lower16Bits
+	}
+	return uint16(^result & 0xFFFF)
+}
+
+const (
+	// IANA assigned protocol numbers: https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
+	PROTO_ICMP = 1
+	PROTO_TCP  = 6
+	PROTO_UDP  = 17
+)
+
+func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) IPv4 {
+	srcIP := net.ParseIP("192.0.2.2")
+
+	ipv4 := IPv4{
+		// Shift 4 (0100 in binary) four spots to the left to get 01000000 to represent version 4
+		// 5 is the IHL field
+		// Use bitwise OR to combine the two
+		versIHL:     4<<4 | 5,
+		tos:         0,
+		totalLength: 20 + contentLength,
+		id:          1,
+		fragOff:     0,
+		ttl:         ttl,
+		protocol:    protocol,
+		checksum:    0,
+		src:         srcIP.To4(),
+		dest:        destIP,
+	}
+	ipv4.checksum = getChecksum(ipv4.toBytes())
+	return ipv4
 }
