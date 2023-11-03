@@ -35,27 +35,26 @@ func main() {
 	ip := net.ParseIP("192.0.2.1")
 	ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, ip, 0)
 
-	fmt.Printf("ping: %q\n", p)
-	fmt.Printf("ip bytes: %q\n", ipv4.toBytes())
+	synPacket := append(ipv4.toBytes(), p...)
 
-	packet := append(ipv4.toBytes(), p...)
-	fmt.Printf("packet: %q", packet)
+	_, err = tun.Write(synPacket)
+	if err != nil {
+		log.Fatalf("error writing syn packet: %v", err)
+	}
 
-	// synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
+	timeoutDur := 1 * time.Millisecond
+	for {
+		reply, err := readWithTimeout(tun, 1024, timeoutDur)
+		if err != nil {
+			log.Fatalf("error reading with timeout: %v", err)
+		}
+		fmt.Printf("reply[:20]: %q", reply[:20])
+		// getting \xc7\xd2 instead of \x87\xb2 in between
 
-	// _, err = tun.Write(synPacket)
-	// if err != nil {
-	// 	log.Fatalf("error writing syn packet: %v", err)
-	// }
-
-	// timeoutDur := 1 * time.Millisecond
-	// for {
-	// 	reply, err := readWithTimeout(tun, 1024, timeoutDur)
-	// 	if err != nil {
-	// 		log.Fatalf("error reading with timeout: %v", err)
-	// 	}
-	// 	fmt.Printf("reply: %q", reply)
-	// }
+		ipPart := []byte(reply[:20])
+		iv4 := net.IP(ipPart)
+		fmt.Printf("ipv: %q", iv4.String())
+	}
 }
 
 func openTun(tunName string) (*os.File, error) {
