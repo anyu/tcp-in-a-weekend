@@ -32,39 +32,30 @@ func main() {
 	defer tun.Close()
 
 	p := ping()
-	fmt.Printf("p: %q", p)
+	ip := net.ParseIP("192.0.2.1")
+	ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, ip, 0)
 
-	synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
+	fmt.Printf("ping: %q\n", p)
+	fmt.Printf("ip bytes: %q\n", ipv4.toBytes())
 
-	// test
-	ipv4 := IPv4{
-		versIHL:     4<<4 | 5,
-		tos:         0,
-		totalLength: 28,
-		id:          1,
-		fragOff:     0,
-		ttl:         16,
-		protocol:    6,
-		checksum:    0,
-		src:         []byte{192, 168, 0, 1},
-		dest:        []byte{8, 8, 8, 8},
-	}
-	output := ipv4.toBytes()
-	fmt.Printf("output: %q", output)
+	packet := append(ipv4.toBytes(), p...)
+	fmt.Printf("packet: %q", packet)
 
-	_, err = tun.Write(synPacket)
-	if err != nil {
-		log.Fatalf("error writing syn packet: %v", err)
-	}
+	// synPacket := []byte("E\x00\x00,\x00\x01\x00\x00@\x06\xf6\xc7\xc0\x00\x02\x02\xc0\x00\x02\x0109\x1f\x90\x00\x00\x00\x00\x00\x00\x00\x00`\x02\xff\xff\xc4Y\x00\x00\x02\x04\x05\xb4")
 
-	timeoutDur := 1 * time.Millisecond
-	for {
-		reply, err := readWithTimeout(tun, 1024, timeoutDur)
-		if err != nil {
-			log.Fatalf("error reading with timeout: %v", err)
-		}
-		fmt.Printf("reply: %q", reply)
-	}
+	// _, err = tun.Write(synPacket)
+	// if err != nil {
+	// 	log.Fatalf("error writing syn packet: %v", err)
+	// }
+
+	// timeoutDur := 1 * time.Millisecond
+	// for {
+	// 	reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	// 	if err != nil {
+	// 		log.Fatalf("error reading with timeout: %v", err)
+	// 	}
+	// 	fmt.Printf("reply: %q", reply)
+	// }
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -204,6 +195,9 @@ const (
 )
 
 func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) IPv4 {
+	if ttl == 0 {
+		ttl = 64
+	}
 	srcIP := net.ParseIP("192.0.2.2")
 
 	ipv4 := IPv4{
@@ -275,5 +269,5 @@ func ping() []byte {
 }
 
 /* MISC
-- When using %q directive, 8 becomes \b, instead of x08 in hex
+- When using %q directive, 8 becomes \b (backspace, ascii), instead of x08 in hex.
 */
