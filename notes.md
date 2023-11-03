@@ -60,3 +60,7 @@ Encapsulation use case examples:
 - NIC, physical network interface cards
 - How does VPNs really work
 
+### Resources
+- **TUN/TAP**:
+  - https://www.gabriel.urdhr.fr/2021/05/08/tuntap/#tun-vs-tap
+

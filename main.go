@@ -16,17 +16,17 @@ const (
 	// Flag that indicates the device is a TUN device.
 	LINUX_IFF_TUN = 0x0001
 	// Flag that indicates the device should not add a packet information header.
-	// Without this flag, the device adds a 4-byte header to each packet. TODO: Why?
+	// Without this flag, the device adds a 4-byte header to each packet.
 	LINUX_IFF_NO_PI = 0x1000
-	// Flat that sets the interface index for the device (essentially assigning a unique ID to the network interface created by the tun driver)
-	// used to identify and manage the device (allows other apps to interact with the device using this index)
+	// Flag that sets the interface index for the device (essentially assigning a unique ID to the network interface created by the tun driver)
+	// Used to identify and manage the device (allows other apps to interact with the device using this index)
 	LINUX_TUNSETIFF = 0x400454CA
 )
 
 func main() {
-	tun, err := openTun("tun0") // TODO: tun0 (the VPN interface?)
+	tun, err := openTun("tun0")
 	if err != nil {
-		log.Fatalf("error opening tunnel: %v", tun)
+		log.Fatalf("error opening tunnel: %v", err)
 	}
 	defer tun.Close()
 
@@ -36,8 +36,9 @@ func main() {
 		log.Fatalf("error writing syn packet: %v", err)
 	}
 
+	timeoutDur := 1 * time.Millisecond
 	for {
-		reply, err := readWithTimeout(tun, 1024, 1)
+		reply, err := readWithTimeout(tun, 1024, timeoutDur)
 		if err != nil {
 			log.Fatalf("error reading with timeout: %v", err)
 		}
@@ -58,17 +59,20 @@ func openTun(tunName string) (*os.File, error) {
 	// bytes to store interface name and flags
 	var ifr [40]byte
 
+	// Copy name into first 16 elements
 	copy(ifr[:16], []byte(tunName))
 
+	// Store flags after the 16th element
+	// BigEndian results in invalid arg from ioctl call
 	binary.LittleEndian.PutUint16(ifr[16:], flags)
 
-	// the sys call returns an error number (errno) of 0 if successful
+	// The sys call returns an error number (errno) of 0 if successful
 	// Fd() = get file descriptor
 	// We pass a pointer to the ifr []byte to let the syscall access the data stored there.
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(tun.Fd()), uintptr(LINUX_TUNSETIFF), uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
 		tun.Close()
-		return nil, fmt.Errorf("error making ioctl call: %v", err)
+		return nil, fmt.Errorf("error making ioctl call: %v", errno)
 	}
 
 	return tun, nil
@@ -76,32 +80,31 @@ func openTun(tunName string) (*os.File, error) {
 
 func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) ([]byte, error) {
 	if timeout == 0 {
-		timeout = 1000 * time.Millisecond
+		timeout = 1 * time.Millisecond
 	}
 	tunData := make([]byte, numBytes)
 
 	tunDataChan := make(chan []byte, 1)
 
-	go func() {
-		n, err := tun.Read(tunData)
-		if err != nil {
-			fmt.Printf("error reading with timeout: %v", err)
-			tunDataChan <- nil
-		} else {
-			tunDataChan <- tunData[:n]
-		}
-	}()
+	n, err := tun.Read(tunData)
+	if err != nil {
+		fmt.Printf("error reading with timeout: %v", err)
+		tunDataChan <- nil
+	} else {
+		tunDataChan <- tunData[:n]
+	}
 
-	select {
-	case receivedData := <-tunDataChan:
-		if receivedData == nil {
-			return nil, fmt.Errorf("error reading with timeout")
+	for {
+		select {
+		case receivedData := <-tunDataChan:
+			if receivedData == nil {
+				return nil, fmt.Errorf("error reading with timeout")
+			}
+			fmt.Printf("Data received: %v\n", receivedData)
+			return receivedData, nil
+		case <-time.After(timeout):
+			return nil, fmt.Errorf("timeout reached")
 		}
-		fmt.Printf("Data received: %v\n", receivedData)
-		return receivedData, nil
-	case <-time.After(timeout):
-		fmt.Println("Timeout reached")
-		return nil, fmt.Errorf("timeout reached")
 	}
 }
 
