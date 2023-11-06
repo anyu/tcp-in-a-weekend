@@ -28,7 +28,8 @@ const (
 
 func main() {
 
-	ping("192.0.2.1", 10)
+	tunDeviceIP := "192.0.2.1"
+	ping(tunDeviceIP, 10)
 
 	// 	timeoutDur := 1 * time.Millisecond
 	// 	for {
