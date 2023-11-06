@@ -28,22 +28,51 @@ const (
 
 func main() {
 
-	tunDeviceIP := "192.0.2.1"
-	ping(tunDeviceIP, 10)
+	// tunDeviceIP := "192.0.2.1"
+	// ping(tunDeviceIP, 10)
 
-	// 	timeoutDur := 1 * time.Millisecond
-	// 	for {
-	// 		reply, err := readWithTimeout(tun, 1024, timeoutDur)
-	// 		if err != nil {
-	// 			log.Fatalf("error reading with timeout: %v", err)
-	// 		}
-	// 		fmt.Printf("reply[:20]: %q", reply[:20])
-	// 		// getting \xc7\xd2 instead of \x87\xb2 in between
+	query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
 
-	//		ipPart := []byte(reply[:20])
-	//		iv4 := net.IP(ipPart)
-	//		fmt.Printf("ipv: %q", iv4.String())
-	//	}
+	ipBytes := net.ParseIP("8.8.8.8")
+	udp := createUDP(ipBytes, 12345, 53, query)
+	fmt.Printf("0x%x", udp)
+
+	// tun, err := openTun("tun0")
+	// if err != nil {
+	// 	log.Fatalf("error opening tunnel: %v", err)
+	// }
+	// defer tun.Close()
+	// _, err = tun.Write(udp)
+	// if err != nil {
+	// 	log.Fatalf("error writing syn packet: %v", err)
+	// }
+	// reply := make([]byte, 1024)
+	// _, err = tun.Read(reply)
+	// if err != nil {
+	// 	fmt.Printf("error reading with timeout: %v", err)
+	// }
+	// replyIP, err := ipv4FromBytes(reply[:20])
+	// if err != nil {
+	// 	fmt.Printf("error unpacking ipv4 from bytes: %v", err)
+	// }
+	// fmt.Println(replyIP)
+
+	// udpReply := udpFromBytes(reply[20:])
+	// fmt.Println(udpReply)
+
+	// timeoutDur := 1 * time.Millisecond
+	// for {
+	// 	reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	// 	if err != nil {
+	// 		log.Fatalf("error reading with timeout: %v", err)
+	// 	}
+	// 	fmt.Printf("reply[:20]: %q", reply[:20])
+	// 	// getting \xc7\xd2 instead of \x87\xb2 in between
+
+	// 	ipPart := []byte(reply[:20])
+	// 	iv4 := net.IP(ipPart)
+	// 	fmt.Printf("ipv: %q", iv4.String())
+	// }
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -310,7 +339,7 @@ func makePing(seq uint16) []byte {
 		ID:       12345,
 		Seq:      seq,
 	}
-	icmp.Checksum = getChecksum(icmp.toBytes())
+	icmp.Checksum = generateChecksum(icmp.toBytes())
 	return icmp.toBytes()
 }
 
@@ -371,7 +400,8 @@ func (u *UDP) toBytes() []byte {
 	binary.BigEndian.PutUint16(header[0:2], u.SrcPort)
 	binary.BigEndian.PutUint16(header[2:4], u.DestPort)
 
-	binary.BigEndian.PutUint16(header[4:6], u.Length)
+	length := uint16(len(u.Contents) + 8)
+	binary.BigEndian.PutUint16(header[4:6], length)
 	binary.BigEndian.PutUint16(header[6:8], u.Checksum)
 
 	return append(header, u.Contents...)
@@ -403,6 +433,19 @@ func genPseudoHeaderChecksum(ipv4 IPv4, payload []byte) uint16 {
 	pseudoHeader := append(ipv4PseudoHeader, payload...)
 
 	return generateChecksum(pseudoHeader)
+}
+
+func (u *UDP) String() string {
+	return fmt.Sprintf("Source Port: %d\n"+
+		"Destination Port: %d\n"+
+		"Length: %d\n"+
+		"Checksum: 0x%04X\n"+
+		"Contents: %s\n",
+		u.SrcPort,
+		u.DestPort,
+		u.Length,
+		u.Checksum,
+		u.Contents)
 }
 
 func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
