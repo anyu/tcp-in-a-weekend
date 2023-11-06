@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -32,8 +33,8 @@ func main() {
 	defer tun.Close()
 
 	p := ping()
-	ip := net.ParseIP("192.0.2.1")
-	ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, ip, 0)
+	destIP := net.ParseIP("192.0.2.1")
+	ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, destIP, 0)
 
 	synPacket := append(ipv4.toBytes(), p...)
 
@@ -41,20 +42,33 @@ func main() {
 	if err != nil {
 		log.Fatalf("error writing syn packet: %v", err)
 	}
-
-	timeoutDur := 1 * time.Millisecond
-	for {
-		reply, err := readWithTimeout(tun, 1024, timeoutDur)
-		if err != nil {
-			log.Fatalf("error reading with timeout: %v", err)
-		}
-		fmt.Printf("reply[:20]: %q", reply[:20])
-		// getting \xc7\xd2 instead of \x87\xb2 in between
-
-		ipPart := []byte(reply[:20])
-		iv4 := net.IP(ipPart)
-		fmt.Printf("ipv: %q", iv4.String())
+	reply := make([]byte, 1024)
+	_, err = tun.Read(reply)
+	if err != nil {
+		fmt.Printf("error reading with timeout: %v", err)
 	}
+	replyIP, err := ipv4FromBytes(reply[:20])
+	if err != nil {
+		fmt.Printf("error unpacking ipv4 from bytes: %v", err)
+	}
+	fmt.Println(replyIP.String())
+
+	replyICMP := icmpFromBytes(reply[20:])
+	fmt.Println(replyICMP.String())
+
+	// 	timeoutDur := 1 * time.Millisecond
+	// 	for {
+	// 		reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	// 		if err != nil {
+	// 			log.Fatalf("error reading with timeout: %v", err)
+	// 		}
+	// 		fmt.Printf("reply[:20]: %q", reply[:20])
+	// 		// getting \xc7\xd2 instead of \x87\xb2 in between
+
+	//		ipPart := []byte(reply[:20])
+	//		iv4 := net.IP(ipPart)
+	//		fmt.Printf("ipv: %q", iv4.String())
+	//	}
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -148,23 +162,65 @@ type IPv4 struct {
 
 func (i *IPv4) toBytes() []byte {
 	// We can create a fixed-size byte slice of 20 bytes since the IPv4 fields sum up to 20 bytes.
-	buf := make([]byte, 20)
-	buf[0] = i.versIHL
-	buf[1] = i.tos
-	binary.BigEndian.PutUint16(buf[2:4], i.totalLength)
-	binary.BigEndian.PutUint16(buf[4:6], i.id)
-	binary.BigEndian.PutUint16(buf[6:8], i.fragOff)
-	buf[8] = i.ttl
-	buf[9] = i.protocol
-	binary.BigEndian.PutUint16(buf[10:12], i.checksum)
+	b := make([]byte, 20)
+	b[0] = i.versIHL
+	b[1] = i.tos
+	binary.BigEndian.PutUint16(b[2:4], i.totalLength)
+	binary.BigEndian.PutUint16(b[4:6], i.id)
+	binary.BigEndian.PutUint16(b[6:8], i.fragOff)
+	b[8] = i.ttl
+	b[9] = i.protocol
+	binary.BigEndian.PutUint16(b[10:12], i.checksum)
 
 	srcIP := i.src.To4() // To4() converts the ip to 4 bytes.
 	destIP := i.dest.To4()
 
-	copy(buf[12:16], srcIP)
-	copy(buf[16:20], destIP)
+	copy(b[12:16], srcIP)
+	copy(b[16:20], destIP)
 
-	return buf
+	return b
+}
+
+func (ip IPv4) String() string {
+	return fmt.Sprintf("Version & IHL: %d\n"+
+		"TOS: %d\n"+
+		"Total Length: %d\n"+
+		"Identification: %d\n"+
+		"Fragment Offset: %d\n"+
+		"TTL: %d\n"+
+		"Protocol: %d\n"+
+		"Checksum: 0x%04X\n"+
+		"Source IP: %s\n"+
+		"Destination IP: %s\n",
+		ip.versIHL,
+		ip.tos,
+		ip.totalLength,
+		ip.id,
+		ip.fragOff,
+		ip.ttl,
+		ip.protocol,
+		ip.checksum,
+		ip.src,
+		ip.dest)
+}
+
+func ipv4FromBytes(b []byte) (IPv4, error) {
+	if len(b) < 20 {
+		return IPv4{}, errors.New("input bytes is less than 20 bytes")
+	}
+	ipv4 := IPv4{}
+	ipv4.versIHL = b[0]
+	ipv4.tos = b[1]
+	ipv4.totalLength = binary.BigEndian.Uint16(b[2:4])
+	ipv4.id = binary.BigEndian.Uint16(b[4:6])
+	ipv4.fragOff = binary.BigEndian.Uint16(b[6:8])
+	ipv4.ttl = b[8]
+	ipv4.protocol = b[9]
+	ipv4.checksum = binary.BigEndian.Uint16(b[10:12])
+	ipv4.src = net.IP(b[12:16]).To4()
+	ipv4.dest = net.IP(b[16:20]).To4()
+
+	return ipv4, nil
 }
 
 func getChecksum(data []byte) uint16 {
@@ -197,6 +253,7 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 	if ttl == 0 {
 		ttl = 64
 	}
+
 	srcIP := net.ParseIP("192.0.2.2")
 
 	ipv4 := IPv4{
@@ -233,18 +290,18 @@ type ICMPEcho struct {
 }
 
 func (i ICMPEcho) toBytes() []byte {
-	buf := make([]byte, 8)
-	buf[0] = i.Type
-	buf[1] = i.Code
-	binary.BigEndian.PutUint16(buf[2:4], i.Checksum)
-	binary.BigEndian.PutUint16(buf[4:6], i.ID)
-	binary.BigEndian.PutUint16(buf[6:8], i.Seq)
+	b := make([]byte, 8)
+	b[0] = i.Type
+	b[1] = i.Code
+	binary.BigEndian.PutUint16(b[2:4], i.Checksum)
+	binary.BigEndian.PutUint16(b[4:6], i.ID)
+	binary.BigEndian.PutUint16(b[6:8], i.Seq)
 
-	return buf
+	return b
 }
 
-func icmpFromBytes(data []byte) (ICMPEcho, error) {
-	var icmp ICMPEcho
+func icmpFromBytes(data []byte) ICMPEcho {
+	icmp := ICMPEcho{}
 
 	icmp.Type = data[0]
 	icmp.Code = data[1]
@@ -252,7 +309,22 @@ func icmpFromBytes(data []byte) (ICMPEcho, error) {
 	icmp.ID = binary.BigEndian.Uint16(data[4:6])
 	icmp.Seq = binary.BigEndian.Uint16(data[6:8])
 
-	return icmp, nil
+	return icmp
+}
+
+func (icmp ICMPEcho) String() string {
+	return fmt.Sprintf(
+		"Type: %d\n"+
+			"Code: %d\n"+
+			"Checksum: %d\n"+
+			"ID: %d\n"+
+			"Seq: %d\n",
+		icmp.Type,
+		icmp.Code,
+		icmp.Checksum,
+		icmp.ID,
+		icmp.Seq,
+	)
 }
 
 func ping() []byte {
