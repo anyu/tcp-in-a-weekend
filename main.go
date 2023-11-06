@@ -32,47 +32,8 @@ func main() {
 	// ping(tunDeviceIP, 10)
 
 	query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
-
-	ipBytes := net.ParseIP("8.8.8.8")
-	udp := createUDP(ipBytes, 12345, 53, query)
-	fmt.Printf("0x%x", udp)
-
-	// tun, err := openTun("tun0")
-	// if err != nil {
-	// 	log.Fatalf("error opening tunnel: %v", err)
-	// }
-	// defer tun.Close()
-	// _, err = tun.Write(udp)
-	// if err != nil {
-	// 	log.Fatalf("error writing syn packet: %v", err)
-	// }
-	// reply := make([]byte, 1024)
-	// _, err = tun.Read(reply)
-	// if err != nil {
-	// 	fmt.Printf("error reading with timeout: %v", err)
-	// }
-	// replyIP, err := ipv4FromBytes(reply[:20])
-	// if err != nil {
-	// 	fmt.Printf("error unpacking ipv4 from bytes: %v", err)
-	// }
-	// fmt.Println(replyIP)
-
-	// udpReply := udpFromBytes(reply[20:])
-	// fmt.Println(udpReply)
-
-	// timeoutDur := 1 * time.Millisecond
-	// for {
-	// 	reply, err := readWithTimeout(tun, 1024, timeoutDur)
-	// 	if err != nil {
-	// 		log.Fatalf("error reading with timeout: %v", err)
-	// 	}
-	// 	fmt.Printf("reply[:20]: %q", reply[:20])
-	// 	// getting \xc7\xd2 instead of \x87\xb2 in between
-
-	// 	ipPart := []byte(reply[:20])
-	// 	iv4 := net.IP(ipPart)
-	// 	fmt.Printf("ipv: %q", iv4.String())
-	// }
+	destIP := "8.8.8.8"
+	sendUDP(destIP, query)
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -193,7 +154,7 @@ func (ip IPv4) String() string {
 		"Fragment Offset: %d\n"+
 		"TTL: %d\n"+
 		"Protocol: %d\n"+
-		"Checksum: 0x%04X\n"+
+		"Checksum: %d\n"+
 		"Source IP: %s\n"+
 		"Destination IP: %s\n",
 		ip.versIHL,
@@ -407,8 +368,8 @@ func (u *UDP) toBytes() []byte {
 	return append(header, u.Contents...)
 }
 
-func udpFromBytes(data []byte) UDP {
-	udp := UDP{}
+func udpFromBytes(data []byte) *UDP {
+	udp := &UDP{}
 
 	header := data[:8]
 	payload := data[8:]
@@ -439,8 +400,8 @@ func (u *UDP) String() string {
 	return fmt.Sprintf("Source Port: %d\n"+
 		"Destination Port: %d\n"+
 		"Length: %d\n"+
-		"Checksum: 0x%04X\n"+
-		"Contents: %s\n",
+		"Checksum: %d\n"+
+		"Contents: 0x%x\n",
 		u.SrcPort,
 		u.DestPort,
 		u.Length,
@@ -462,4 +423,37 @@ func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
 	udp.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
 
 	return append(ipv4.toBytes(), udp.toBytes()...)
+}
+
+func sendUDP(destIP string, query []byte) {
+	ipBytes := net.ParseIP(destIP)
+	udp := createUDP(ipBytes, 12345, 53, query)
+
+	tun, err := openTun("tun0")
+	if err != nil {
+		log.Fatalf("error opening tunnel: %v", err)
+	}
+	defer tun.Close()
+	_, err = tun.Write(udp)
+	if err != nil {
+		log.Fatalf("error writing syn packet: %v", err)
+	}
+
+	timeoutDur := 500 * time.Millisecond
+
+	reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	if err != nil {
+		log.Fatalf("error reading with timeout: %v", err)
+	}
+	ipv4Reply, err := ipv4FromBytes(reply[:20])
+	if err != nil {
+		log.Fatalf("error reading ipv4: %v", err)
+	}
+	fmt.Println(ipv4Reply)
+
+	udpReply := udpFromBytes(reply[20:])
+	fmt.Println(udpReply)
+
+	ip := udpReply.Contents[len(udpReply.Contents)-4:]
+	fmt.Println(ip)
 }
