@@ -20,7 +20,7 @@ func TestChecksum(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.data, func(t *testing.T) {
 			data := hexToBytes(tc.data)
-			actual := checksum(data)
+			actual := getChecksum(data)
 			if actual != tc.expected {
 				t.Errorf("Data: %s, expected: %d, but got: %d", tc.data, tc.expected, actual)
 			}

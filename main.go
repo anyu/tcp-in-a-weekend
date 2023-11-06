@@ -18,7 +18,8 @@ const (
 	// Flag that indicates the device is a TUN device.
 	LINUX_IFF_TUN = 0x0001
 	// Flag that indicates the device should not add a packet information header.
-	// Without this flag, the device adds a 4-byte header to each packet.
+	// Without this flag, the device adds a 4-byte header to each packet (2 bytes of flags, 2 bytes of protocol type).
+	// This header is largely redundant, so we mostly want to set the flag.
 	LINUX_IFF_NO_PI = 0x1000
 	// Flag that sets the interface index for the device (essentially assigning a unique ID to the network interface created by the tun driver)
 	// Used to identify and manage the device (allows other apps to interact with the device using this index)
@@ -26,35 +27,8 @@ const (
 )
 
 func main() {
-	tun, err := openTun("tun0")
-	if err != nil {
-		log.Fatalf("error opening tunnel: %v", err)
-	}
-	defer tun.Close()
 
-	p := ping()
-	destIP := net.ParseIP("192.0.2.1")
-	ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, destIP, 0)
-
-	synPacket := append(ipv4.toBytes(), p...)
-
-	_, err = tun.Write(synPacket)
-	if err != nil {
-		log.Fatalf("error writing syn packet: %v", err)
-	}
-	reply := make([]byte, 1024)
-	_, err = tun.Read(reply)
-	if err != nil {
-		fmt.Printf("error reading with timeout: %v", err)
-	}
-	replyIP, err := ipv4FromBytes(reply[:20])
-	if err != nil {
-		fmt.Printf("error unpacking ipv4 from bytes: %v", err)
-	}
-	fmt.Println(replyIP.String())
-
-	replyICMP := icmpFromBytes(reply[20:])
-	fmt.Println(replyICMP.String())
+	ping("192.0.2.1", 10)
 
 	// 	timeoutDur := 1 * time.Millisecond
 	// 	for {
@@ -327,18 +301,49 @@ func (icmp ICMPEcho) String() string {
 	)
 }
 
-func ping() []byte {
+func makePing(seq uint16) []byte {
 	icmp := ICMPEcho{
 		Type:     8,
 		Code:     0,
 		Checksum: 0,
 		ID:       12345,
-		Seq:      1, // could make a param later
+		Seq:      seq,
 	}
 	icmp.Checksum = getChecksum(icmp.toBytes())
 	return icmp.toBytes()
 }
 
-/* MISC
-- When using %q directive, 8 becomes \b (backspace, ascii), instead of x08 in hex.
-*/
+func ping(ip string, count int) error {
+	parsedIP := net.ParseIP(ip)
+
+	tun, err := openTun("tun0")
+	if err != nil {
+		log.Fatalf("error opening tunnel: %v", err)
+	}
+	defer tun.Close()
+
+	for i := 0; i < count; i++ {
+		p := makePing(uint16(i))
+		ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, parsedIP, 0)
+		synPacket := append(ipv4.toBytes(), p...)
+
+		start := time.Now()
+		_, err := tun.Write(synPacket)
+		if err != nil {
+			log.Fatalf("error writing syn packet: %v", err)
+		}
+		reply := make([]byte, 1024)
+		_, err = tun.Read(reply)
+		if err != nil {
+			fmt.Printf("error reading with timeout: %v", err)
+		}
+		replyIP, err := ipv4FromBytes(reply[:20])
+		if err != nil {
+			fmt.Printf("error unpacking ipv4 from bytes: %v", err)
+		}
+		elapsedMS := time.Since(start).Seconds() * 1000
+		response := icmpFromBytes(reply[20:])
+		fmt.Printf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.ttl, elapsedMS)
+	}
+	return nil
+}
