@@ -459,3 +459,98 @@ func sendUDP(destIP string, query []byte) {
 	ip := udpReply.Contents[len(udpReply.Contents)-4:]
 	fmt.Println(ip)
 }
+
+const (
+	FLAG_FIN = 1
+	FLAG_SYN = 2
+	FLAG_RST = 4
+	FLAG_PSH = 8
+	FLAG_ACK = 16
+)
+
+// TCP packets consist of a header followed by the payload.
+// The header contains of 10 fields, totaling 20 bytes.
+type TCP struct {
+	// SrcPort is a 16-bit field specifying port of the device sending the data. Can be 0 if no reply is needed.
+	SrcPort uint16
+	// DestPort is a 16-bit field specifying the port of the device receiving the data.
+	DestPort uint16
+	// Seq represents the sequence number, a 32-bit field indicating how much data is sent during the TCP session.
+	// The initial seq number is a random value.
+	Seq uint32
+	// Ack represents the acknowledgement number, a 32-bit field used by the receiver to request the next TCP segment.
+	// This value is seq incremented by 1.
+	Ack uint32
+	// Offset is a 4-bit field specifying the number of 32-bit 'words' in the header, used to indicate where the payload data begins.
+	// For historical reasons, the conventional unit used is 'word'. Each word is 4 bytes, so we need to dide by 4 to get length of the TCP header in bytes.
+	// Defaulted to 0 since it'll be automatically calculated.
+	Offset uint8
+	//
+	// Reserved? some sources set aside 4 bits for this.
+	//
+	// Flags (aka control bits) is an 8-bit field for flags used to establish/terminate connections and send data.
+	// The flags are: CWR, ECE, URG, ACK, PSH, RST, SYN, and FIN
+	Flags uint8
+	// Window is a 16-bit field specifying how many bytes the receiver is willing to receive.
+	Window uint16
+	// Checksum is a 16-bit field used to verify the integrity of the header.
+	Checksum uint16
+	// Urgent is a 16-bit field used to indicate the data should be delivered as quickly as possible.
+	// The pointer specifies where urgent data ends. Mostly obsolete and set to 0.
+	Urgent uint16
+	// Options are for new extensions to the TCP protocol. Can be 0 to 320 bits (40 bytes)
+	Options []byte
+	// Data is the contents of the packet.
+	Data []byte
+}
+
+func (t *TCP) toBytes() []byte {
+	tcpLen := 20 + len(t.Options) + len(t.Data)
+	b := make([]byte, tcpLen)
+
+	binary.BigEndian.PutUint16(b[0:2], t.SrcPort)
+	binary.BigEndian.PutUint16(b[2:4], t.DestPort)
+	binary.BigEndian.PutUint32(b[4:8], t.Seq)
+	binary.BigEndian.PutUint32(b[8:12], t.Ack)
+
+	// The offset field is mesaured in units of 32-bit 'words' rather than bytes.
+	// 1 word equals 4 bytes (32 bits).
+	headerLen := 20 + len(t.Options)
+
+	// We divide by 4 to get the header length in 32-bit words.
+	headerLenInWords := headerLen / 4
+
+	// Left shift by 4 (multiply by 16) to get offset value for the header length in terms of words.
+	b[12] = uint8(headerLenInWords << 4)
+	b[13] = t.Flags
+	binary.BigEndian.PutUint16(b[14:16], t.Window)
+	binary.BigEndian.PutUint16(b[16:18], t.Checksum)
+	binary.BigEndian.PutUint16(b[18:20], t.Urgent)
+
+	copy(b[20:], t.Options)
+	copy(b[20+len(t.Options):], t.Data)
+
+	return b
+}
+
+func tcpFromBytes(data []byte) *TCP {
+	tcp := &TCP{}
+
+	headerBytes := data[:20]
+
+	tcp.SrcPort = binary.BigEndian.Uint16(headerBytes[0:2])
+	tcp.DestPort = binary.BigEndian.Uint16(headerBytes[2:4])
+	tcp.Seq = binary.BigEndian.Uint32(headerBytes[4:8])
+	tcp.Ack = binary.BigEndian.Uint32(headerBytes[8:12])
+
+	// Right shift by 4 (multiply by 16) to get offset value for the header length in bytes
+	tcp.Offset = uint8(headerBytes[12]) >> 4
+	tcp.Flags = headerBytes[13]
+
+	tcp.Window = binary.BigEndian.Uint16(headerBytes[14:16])
+	tcp.Checksum = binary.BigEndian.Uint16(headerBytes[16:18])
+	tcp.Urgent = binary.BigEndian.Uint16(headerBytes[18:20])
+
+	// TODO: data
+	return tcp
+}
