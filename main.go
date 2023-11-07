@@ -197,6 +197,7 @@ func generateChecksum(data []byte) uint16 {
 	var result uint32
 	for i := 0; i < len(data); i += 2 {
 
+		// get next two bytes
 		part := binary.BigEndian.Uint16(data[i : i+2])
 		result += uint32(part)
 		// Ensure result doesn't exceed 2^16-1 (max uint16 value)
@@ -204,6 +205,7 @@ func generateChecksum(data []byte) uint16 {
 		lower16Bits := result & 0xFFFF
 		result = upper16Bits + lower16Bits
 	}
+	// invert results within the lower bits (& 0xFFFF ensures only the lower bits are used for the checksum)
 	return uint16(^result & 0xFFFF)
 }
 
@@ -237,6 +239,7 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 		dest:        destIP,
 	}
 	ipv4.checksum = generateChecksum(ipv4.toBytes())
+	fmt.Printf("ipv4 %d", ipv4.checksum)
 	return ipv4
 }
 
@@ -401,7 +404,7 @@ func (u *UDP) String() string {
 		"Destination Port: %d\n"+
 		"Length: %d\n"+
 		"Checksum: %d\n"+
-		"Contents: 0x%x\n",
+		"Contents: %q\n",
 		u.SrcPort,
 		u.DestPort,
 		u.Length,
@@ -421,7 +424,6 @@ func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
 	udpBytes := udp.toBytes()
 	ipv4 := createIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
 	udp.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
-
 	return append(ipv4.toBytes(), udp.toBytes()...)
 }
 
