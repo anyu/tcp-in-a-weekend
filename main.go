@@ -103,42 +103,42 @@ type IPv4 struct {
 	// IHL is the header length divided by 4.
 	// The header length is 20 (assuming no options), so we can hardcode the IHL to 20/4=5.
 	// Combined into one field since they're both the same byte and always the same.
-	versIHL uint8
+	VersIHL uint8
 	//
-	tos uint8
+	Tos uint8
 	// Total length of the IPv4 header + data after the header.
-	totalLength uint16
+	TotalLength uint16
 	// Identification
-	id uint16
+	ID uint16
 	// Fragment offset, used for handling IP fragmentation.
-	fragOff uint16
+	FragOff uint16
 	// Time to live. Number of hops before it should give up on routing.
-	ttl uint8
+	TTL uint8
 	// Protocol specifies the protocol used in the data part of the IP packet.
 	// 6 for TCP, 17 for UDP, 1 for ICMP
-	protocol uint8
+	Protocol uint8
 	// Checksum calculated from the entire IP header used to confirm integrity upon receival.
-	checksum uint16
+	Checksum uint16
 	// source IP address (an IP is 4 bytes)
-	src net.IP
+	Src net.IP
 	// destination IP address
-	dest net.IP
+	Dest net.IP
 }
 
 func (i *IPv4) toBytes() []byte {
 	// We can create a fixed-size byte slice of 20 bytes since the IPv4 fields sum up to 20 bytes.
 	b := make([]byte, 20)
-	b[0] = i.versIHL
-	b[1] = i.tos
-	binary.BigEndian.PutUint16(b[2:4], i.totalLength)
-	binary.BigEndian.PutUint16(b[4:6], i.id)
-	binary.BigEndian.PutUint16(b[6:8], i.fragOff)
-	b[8] = i.ttl
-	b[9] = i.protocol
-	binary.BigEndian.PutUint16(b[10:12], i.checksum)
+	b[0] = i.VersIHL
+	b[1] = i.Tos
+	binary.BigEndian.PutUint16(b[2:4], i.TotalLength)
+	binary.BigEndian.PutUint16(b[4:6], i.ID)
+	binary.BigEndian.PutUint16(b[6:8], i.FragOff)
+	b[8] = i.TTL
+	b[9] = i.Protocol
+	binary.BigEndian.PutUint16(b[10:12], i.Checksum)
 
-	srcIP := i.src.To4() // To4() converts the ip to 4 bytes.
-	destIP := i.dest.To4()
+	srcIP := i.Src.To4() // To4() converts the ip to 4 bytes.
+	destIP := i.Dest.To4()
 
 	copy(b[12:16], srcIP)
 	copy(b[16:20], destIP)
@@ -157,16 +157,16 @@ func (ip IPv4) String() string {
 		"Checksum: %d\n"+
 		"Source IP: %s\n"+
 		"Destination IP: %s\n",
-		ip.versIHL,
-		ip.tos,
-		ip.totalLength,
-		ip.id,
-		ip.fragOff,
-		ip.ttl,
-		ip.protocol,
-		ip.checksum,
-		ip.src,
-		ip.dest)
+		ip.VersIHL,
+		ip.Tos,
+		ip.TotalLength,
+		ip.ID,
+		ip.FragOff,
+		ip.Ttl,
+		ip.Protocol,
+		ip.Checksum,
+		ip.Src,
+		ip.Dest)
 }
 
 func ipv4FromBytes(b []byte) (IPv4, error) {
@@ -174,16 +174,16 @@ func ipv4FromBytes(b []byte) (IPv4, error) {
 		return IPv4{}, errors.New("input bytes is less than 20 bytes")
 	}
 	ipv4 := IPv4{}
-	ipv4.versIHL = b[0]
-	ipv4.tos = b[1]
-	ipv4.totalLength = binary.BigEndian.Uint16(b[2:4])
-	ipv4.id = binary.BigEndian.Uint16(b[4:6])
-	ipv4.fragOff = binary.BigEndian.Uint16(b[6:8])
-	ipv4.ttl = b[8]
-	ipv4.protocol = b[9]
-	ipv4.checksum = binary.BigEndian.Uint16(b[10:12])
-	ipv4.src = net.IP(b[12:16]).To4()
-	ipv4.dest = net.IP(b[16:20]).To4()
+	ipv4.VersIHL = b[0]
+	ipv4.Tos = b[1]
+	ipv4.TotalLength = binary.BigEndian.Uint16(b[2:4])
+	ipv4.ID = binary.BigEndian.Uint16(b[4:6])
+	ipv4.FragOff = binary.BigEndian.Uint16(b[6:8])
+	ipv4.TTL = b[8]
+	ipv4.Protocol = b[9]
+	ipv4.Checksum = binary.BigEndian.Uint16(b[10:12])
+	ipv4.Src = net.IP(b[12:16]).To4()
+	ipv4.Dest = net.IP(b[16:20]).To4()
 
 	return ipv4, nil
 }
@@ -227,19 +227,19 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 		// Shift 4 (0100 in binary) four spots to the left to get 01000000 to represent version 4
 		// 5 is the IHL field
 		// Use bitwise OR to combine the two
-		versIHL:     4<<4 | 5,
-		tos:         0,
-		totalLength: 20 + contentLength,
-		id:          1,
-		fragOff:     0,
-		ttl:         ttl,
-		protocol:    protocol,
-		checksum:    0,
-		src:         srcIP.To4(),
-		dest:        destIP,
+		VersIHL:     4<<4 | 5,
+		Tos:         0,
+		TotalLength: 20 + contentLength,
+		ID:          1,
+		FragOff:     0,
+		TTL:         ttl,
+		Protocol:    protocol,
+		Checksum:    0,
+		Src:         srcIP.To4(),
+		Dest:        destIP,
 	}
-	ipv4.checksum = generateChecksum(ipv4.toBytes())
-	fmt.Printf("ipv4 %d", ipv4.checksum)
+	ipv4.Checksum = generateChecksum(ipv4.toBytes())
+	fmt.Printf("ipv4 %d", ipv4.Checksum)
 	return ipv4
 }
 
@@ -387,12 +387,12 @@ func udpFromBytes(data []byte) *UDP {
 func genPseudoHeaderChecksum(ipv4 IPv4, payload []byte) uint16 {
 	ipv4PseudoHeader := make([]byte, 12)
 
-	copy(ipv4PseudoHeader[0:4], ipv4.src.To4())
-	copy(ipv4PseudoHeader[4:8], ipv4.dest.To4())
+	copy(ipv4PseudoHeader[0:4], ipv4.Src.To4())
+	copy(ipv4PseudoHeader[4:8], ipv4.Dest.To4())
 
 	ipv4PseudoHeader[8] = 0 // technically the ToS field typically set to 0
-	ipv4PseudoHeader[9] = ipv4.protocol
-	binary.BigEndian.PutUint16(ipv4PseudoHeader[10:12], ipv4.totalLength-20)
+	ipv4PseudoHeader[9] = ipv4.Protocol
+	binary.BigEndian.PutUint16(ipv4PseudoHeader[10:12], ipv4.TotalLength-20)
 
 	pseudoHeader := append(ipv4PseudoHeader, payload...)
 
