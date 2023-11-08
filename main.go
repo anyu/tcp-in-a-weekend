@@ -34,6 +34,7 @@ func main() {
 	// query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
 	// destIP := "8.8.8.8"
 	// sendUDP(destIP, query)
+
 	tun, err := openTun("tun0")
 	if err != nil {
 		log.Fatalf("error opening tunnel: %v", err)
@@ -42,7 +43,10 @@ func main() {
 
 	destIP := net.ParseIP("192.0.2.1")
 	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
-	syn.Send(destIP, tun)
+	err = syn.Send(destIP, tun)
+	if err != nil {
+		log.Fatalf("error sending syn: %v", err)
+	}
 
 	timeoutDur := 500 * time.Millisecond
 	reply, err := readWithTimeout(tun, 1024, timeoutDur)
@@ -50,16 +54,41 @@ func main() {
 		log.Fatalf("error reading with timeout: %v", err)
 	}
 
-	fmt.Printf("response: %q", reply)
-
+	fmt.Printf("response: %q\n\n", reply)
+	// got: E\x00\x00(\x00\x00@\x00@\x06\xb6\xcc\xc0\x00\x02\x01\xc0\x00\x02\x02\x1f\x9009\x00\x00\x00\x00\x00\x00\x00\x01P\x14\x00\x00\xdc\x02\x00\x00
+	// exp: E\x00\x00,\x00\x00@\x00@\x06\xb6\xc8\xc0\x00\x02\x01\xc0\x00\x02\x02\x1f\x90095JJ\x98\x00\x00\x00\x01`\x12\xfa\xf0Iu\x00\x00\x02\x04\x05\xb4
 	ipv4, tcp, err := parseTCPresponse(reply)
 	if err != nil {
 		log.Fatalf("error parsing TCP response: %v", err)
 	}
 
 	fmt.Println(ipv4)
+	// total length should be 44, but getting 40
+	// checksum should be 46792, but geting 46796
 	fmt.Println(tcp)
+	/*
+		Source Port: 8080
+		Destination Port: 12345
+		Seq: 0
+		Ack: 1
+		Offset: 20
+		Flags: 20
+		Window: 0
+		Checksum: 56322
+		Urgent: 0
+		Options: "\x1f\x9009\x00\x00\x00\x00\x00\x00\x00\x01P\x14\x00\x00\xdc\x02\x00\x00"
+		Data: ""
 
+		dif from expected:
+
+		seq=894061208
+		offset=96
+		flags=18
+		window=64240
+		checksum=18805
+		options=b'\x02\x04\x05\xb4'
+
+	*/
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -116,7 +145,7 @@ func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) ([]byte, err
 			if receivedData == nil {
 				return nil, fmt.Errorf("error reading with timeout")
 			}
-			fmt.Printf("Data received: %v\n", receivedData)
+			// fmt.Printf("Data received: %v\n", receivedData)
 			return receivedData, nil
 		case <-time.After(timeout):
 			return nil, fmt.Errorf("timeout reached")
@@ -195,11 +224,12 @@ func (ip IPv4) String() string {
 		ip.Dest)
 }
 
-func ipv4FromBytes(b []byte) (IPv4, error) {
+func ipv4FromBytes(b []byte) (*IPv4, error) {
 	if len(b) < 20 {
-		return IPv4{}, errors.New("input bytes is less than 20 bytes")
+		return &IPv4{}, errors.New("input bytes is less than 20 bytes")
 	}
 	ipv4 := IPv4{}
+
 	ipv4.VersIHL = b[0]
 	ipv4.ToS = b[1]
 	ipv4.TotalLength = binary.BigEndian.Uint16(b[2:4])
@@ -211,7 +241,7 @@ func ipv4FromBytes(b []byte) (IPv4, error) {
 	ipv4.Src = net.IP(b[12:16]).To4()
 	ipv4.Dest = net.IP(b[16:20]).To4()
 
-	return ipv4, nil
+	return &ipv4, nil
 }
 
 func generateChecksum(data []byte) uint16 {
@@ -522,11 +552,11 @@ type TCP struct {
 	// This value is seq incremented by 1.
 	Ack uint32
 	// Offset is a 4-bit field specifying the number of 32-bit 'words' in the header, used to indicate where the payload data begins.
-	// For historical reasons, the conventional unit used is 'word'. Each word is 4 bytes, so we need to dide by 4 to get length of the TCP header in bytes.
+	// For historical reasons, the conventional unit used is 'word'. Each word is 4 bytes, so we need to divide by 4 to get length of the TCP header in bytes.
 	// Defaulted to 0 since it'll be automatically calculated.
 	Offset uint8
 	//
-	// Reserved? some sources set aside 4 bits for this.
+	// Reserved is a 4-bit field for future uses, should be set to 0.
 	//
 	// Flags (aka control bits) is an 8-bit field for flags used to establish/terminate connections and send data.
 	// The flags are: CWR, ECE, URG, ACK, PSH, RST, SYN, and FIN
@@ -563,7 +593,8 @@ func (t *TCP) toBytes() []byte {
 	headerLenInWords := headerLen / 4
 
 	// Left shift by 4 (multiply by 16) to get offset value for the header length in terms of words.
-	b[12] = uint8(headerLenInWords << 4)
+	b[12] = uint8(headerLenInWords<<4) | 0
+	fmt.Printf("%v\n", b[12])
 	b[13] = t.Flags
 	binary.BigEndian.PutUint16(b[14:16], t.Window)
 	binary.BigEndian.PutUint16(b[16:18], t.Checksum)
@@ -585,8 +616,9 @@ func tcpFromBytes(data []byte) *TCP {
 	tcp.Seq = binary.BigEndian.Uint32(headerBytes[4:8])
 	tcp.Ack = binary.BigEndian.Uint32(headerBytes[8:12])
 
-	// Right shift by 4 (multiply by 16) to get offset value for the header length in bytes
-	tcp.Offset = (uint8(headerBytes[12]) >> 4) * 4
+	// Right shift by 4 (divide by 16) to get offset value for the header length in bytes
+	headerLen := uint8(headerBytes[12]) >> 4
+	tcp.Offset = headerLen * 4
 	tcp.Flags = headerBytes[13]
 
 	tcp.Window = binary.BigEndian.Uint16(headerBytes[14:16])
@@ -594,12 +626,8 @@ func tcpFromBytes(data []byte) *TCP {
 	tcp.Urgent = binary.BigEndian.Uint16(headerBytes[18:20])
 
 	optionsStart := tcp.Offset - 20
-
 	tcp.Options = headerBytes[optionsStart:tcp.Offset]
 	tcp.Data = headerBytes[tcp.Offset:]
-
-	copy(tcp.Options, headerBytes[optionsStart:tcp.Offset])
-	copy(tcp.Data, headerBytes[tcp.Offset:])
 
 	return tcp
 }
@@ -634,6 +662,7 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
 	ipv4 := createIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
+	// fmt.Println("ipv4", ipv4)
 	t.Checksum = t.GenerateChecksum(ipv4)
 	packet := append(ipv4.toBytes(), t.toBytes()...)
 	_, err := tun.Write(packet)
@@ -668,10 +697,10 @@ func (t *TCP) String() string {
 		t.Data)
 }
 
-func parseTCPresponse(resp []byte) (IPv4, *TCP, error) {
+func parseTCPresponse(resp []byte) (*IPv4, *TCP, error) {
 	ipv4, err := ipv4FromBytes(resp[:20])
 	if err != nil {
-		return IPv4{}, nil, fmt.Errorf("error extracting ipv4 from bytes: %v", err)
+		return &IPv4{}, nil, fmt.Errorf("error extracting ipv4 from bytes: %v", err)
 	}
 	tcp := tcpFromBytes(resp[20:])
 	return ipv4, tcp, nil
