@@ -51,6 +51,15 @@ func main() {
 	}
 
 	fmt.Printf("response: %q", reply)
+
+	ipv4, tcp, err := parseTCPresponse(reply)
+	if err != nil {
+		log.Fatalf("error parsing TCP response: %v", err)
+	}
+
+	fmt.Println(ipv4)
+	fmt.Println(tcp)
+
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -632,4 +641,38 @@ func (t *TCP) Send(destIP []byte, tun *os.File) error {
 		return fmt.Errorf("error writing tcp packet: %v", err)
 	}
 	return nil
+}
+
+func (t *TCP) String() string {
+	return fmt.Sprintf("Source Port: %d\n"+
+		"Destination Port: %d\n"+
+		"Seq: %d\n"+
+		"Ack: %d\n"+
+		"Offset: %d\n"+
+		"Flags: %d\n"+
+		"Window: %d\n"+
+		"Checksum: %d\n"+
+		"Urgent: %d\n"+
+		"Options: %q\n"+
+		"Data: %q\n",
+		t.SrcPort,
+		t.DestPort,
+		t.Seq,
+		t.Ack,
+		t.Offset,
+		t.Flags,
+		t.Window,
+		t.Checksum,
+		t.Urgent,
+		t.Options,
+		t.Data)
+}
+
+func parseTCPresponse(resp []byte) (IPv4, *TCP, error) {
+	ipv4, err := ipv4FromBytes(resp[:20])
+	if err != nil {
+		return IPv4{}, nil, fmt.Errorf("error extracting ipv4 from bytes: %v", err)
+	}
+	tcp := tcpFromBytes(resp[20:])
+	return ipv4, tcp, nil
 }
