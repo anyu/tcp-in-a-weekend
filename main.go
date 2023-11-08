@@ -31,9 +31,15 @@ func main() {
 	// tunDeviceIP := "192.0.2.1"
 	// ping(tunDeviceIP, 10)
 
-	query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
-	destIP := "8.8.8.8"
-	sendUDP(destIP, query)
+	// query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
+	// destIP := "8.8.8.8"
+	// sendUDP(destIP, query)
+
+	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
+	ip := net.ParseIP("192.0.2.1")
+	ipv4 := createIPv4(uint16(len(syn.toBytes())), PROTO_TCP, []byte(ip), 0)
+
+	fmt.Println(ipv4)
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -162,7 +168,7 @@ func (ip IPv4) String() string {
 		ip.TotalLength,
 		ip.ID,
 		ip.FragOff,
-		ip.Ttl,
+		ip.TTL,
 		ip.Protocol,
 		ip.Checksum,
 		ip.Src,
@@ -211,9 +217,9 @@ func generateChecksum(data []byte) uint16 {
 
 const (
 	// IANA assigned protocol numbers: https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
-	PROTO_ICMP = 1
-	PROTO_TCP  = 6
-	PROTO_UDP  = 17
+	PROTO_ICMP uint8 = 1
+	PROTO_TCP  uint8 = 6
+	PROTO_UDP  uint8 = 17
 )
 
 func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) IPv4 {
@@ -239,7 +245,6 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 		Dest:        destIP,
 	}
 	ipv4.Checksum = generateChecksum(ipv4.toBytes())
-	fmt.Printf("ipv4 %d", ipv4.Checksum)
 	return ipv4
 }
 
@@ -337,7 +342,7 @@ func ping(ip string, count int) error {
 		}
 		elapsedMS := time.Since(start).Seconds() * 1000
 		response := icmpFromBytes(reply[20:])
-		fmt.Printf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.ttl, elapsedMS)
+		fmt.Printf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.TTL, elapsedMS)
 	}
 	return nil
 }
@@ -462,15 +467,15 @@ func sendUDP(destIP string, query []byte) {
 
 const (
 	// FlagFIN is used to gracefully terminate the TCP connection.
-	FlagFIN = 1
+	FlagFIN uint8 = 1
 	// FlagSYN is used to create a TCP connection.
-	FlagSYN = 2
+	FlagSYN uint8 = 2
 	// FlagRST is used to immediately terminate the connection and drop any in-transit data.
-	FlagRST = 4
+	FlagRST uint8 = 4
 	// FlagPSH is used to instruct the network stacks to bypass buffering.
-	FlagPSH = 8
+	FlagPSH uint8 = 8
 	// FlagACK is used to acknowledge the reception of packets.
-	FlagACK = 16
+	FlagACK uint8 = 16
 )
 
 // TCP packets consist of a header followed by the payload.
@@ -578,7 +583,6 @@ const (
 const windowMaxSize = 65535
 
 func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) TCP {
-
 	options := make([]byte, 4)
 	if flags == FlagSYN {
 		options[0] = OPT_MSS
