@@ -22,3 +22,22 @@ Here we ping the IP of the TUN device we created during setup, *from* the peer I
 When we send the packet to the TUN device, the OS' network stack extracts the encapsulated ICMP packet and generates the ICMP echo reply.
 
 The echo reply is sent to the TUN device, which encapsulates the echo reply in its tunnel (wraps the reply in an IPv4 header if required by the tunnel protocol used within the TUN device)
+
+## Debugging
+
+Ensure `python3 -m http.server --bind 192.0.2.1 8080` is running throughout since it's the other end we're making our requests to.
+
+Otherwise, will get a reset response.
+
+### Helpful tools
+
+1. tshark, terminal Wireshark
+```sh
+sudo tshark -f "tcp port 12345" -i tun0 -w dump.pcap
+```
+
+Open `dump.pcap` in Wireshark.
+
+2. `nc`
+
+Create a listening socket: `nc -l 192.0.2.1 8080`

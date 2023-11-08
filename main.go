@@ -625,9 +625,9 @@ func tcpFromBytes(data []byte) *TCP {
 	tcp.Checksum = binary.BigEndian.Uint16(headerBytes[16:18])
 	tcp.Urgent = binary.BigEndian.Uint16(headerBytes[18:20])
 
-	optionsStart := tcp.Offset - 20
-	tcp.Options = headerBytes[optionsStart:tcp.Offset]
-	tcp.Data = headerBytes[tcp.Offset:]
+	// optionsStart := tcp.Offset - 20
+	// tcp.Options = headerBytes[optionsStart:tcp.Offset]
+	// tcp.Data = headerBytes[tcp.Offset:]
 
 	return tcp
 }
@@ -662,7 +662,7 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
 	ipv4 := createIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
-	// fmt.Println("ipv4", ipv4)
+	fmt.Println("ipv4", ipv4)
 	t.Checksum = t.GenerateChecksum(ipv4)
 	packet := append(ipv4.toBytes(), t.toBytes()...)
 	_, err := tun.Write(packet)
