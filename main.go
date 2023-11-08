@@ -461,11 +461,16 @@ func sendUDP(destIP string, query []byte) {
 }
 
 const (
-	FLAG_FIN = 1
-	FLAG_SYN = 2
-	FLAG_RST = 4
-	FLAG_PSH = 8
-	FLAG_ACK = 16
+	// FlagFIN is used to gracefully terminate the TCP connection.
+	FlagFIN = 1
+	// FlagSYN is used to create a TCP connection.
+	FlagSYN = 2
+	// FlagRST is used to immediately terminate the connection and drop any in-transit data.
+	FlagRST = 4
+	// FlagPSH is used to instruct the network stacks to bypass buffering.
+	FlagPSH = 8
+	// FlagACK is used to acknowledge the reception of packets.
+	FlagACK = 16
 )
 
 // TCP packets consist of a header followed by the payload.
@@ -505,7 +510,9 @@ type TCP struct {
 }
 
 func (t *TCP) toBytes() []byte {
-	tcpLen := 20 + len(t.Options) + len(t.Data)
+	// 20 = known fixed size of header w/o options
+	headerLen := 20 + len(t.Options)
+	tcpLen := headerLen + len(t.Data)
 	b := make([]byte, tcpLen)
 
 	binary.BigEndian.PutUint16(b[0:2], t.SrcPort)
@@ -515,8 +522,6 @@ func (t *TCP) toBytes() []byte {
 
 	// The offset field is mesaured in units of 32-bit 'words' rather than bytes.
 	// 1 word equals 4 bytes (32 bits).
-	headerLen := 20 + len(t.Options)
-
 	// We divide by 4 to get the header length in 32-bit words.
 	headerLenInWords := headerLen / 4
 
@@ -528,7 +533,7 @@ func (t *TCP) toBytes() []byte {
 	binary.BigEndian.PutUint16(b[18:20], t.Urgent)
 
 	copy(b[20:], t.Options)
-	copy(b[20+len(t.Options):], t.Data)
+	copy(b[headerLen:], t.Data)
 
 	return b
 }
@@ -544,13 +549,55 @@ func tcpFromBytes(data []byte) *TCP {
 	tcp.Ack = binary.BigEndian.Uint32(headerBytes[8:12])
 
 	// Right shift by 4 (multiply by 16) to get offset value for the header length in bytes
-	tcp.Offset = uint8(headerBytes[12]) >> 4
+	tcp.Offset = (uint8(headerBytes[12]) >> 4) * 4
 	tcp.Flags = headerBytes[13]
 
 	tcp.Window = binary.BigEndian.Uint16(headerBytes[14:16])
 	tcp.Checksum = binary.BigEndian.Uint16(headerBytes[16:18])
 	tcp.Urgent = binary.BigEndian.Uint16(headerBytes[18:20])
 
-	// TODO: data
+	optionsStart := tcp.Offset - 20
+
+	tcp.Options = headerBytes[optionsStart:tcp.Offset]
+	tcp.Data = headerBytes[tcp.Offset:]
+
+	copy(tcp.Options, headerBytes[optionsStart:tcp.Offset])
+	copy(tcp.Data, headerBytes[tcp.Offset:])
+
+	return tcp
+}
+
+const (
+	// OPT_MSS is the flag for setting MSS
+	OPT_MSS = 2
+	// MSS is the maximum segment size. It specifies the largest amount of data in bytes (not including the TCP header)
+	// that the receiver can receive in a single TCP segment.
+	// The default is 536 for IPv4, 1220 for IPv6.
+	MSS = 1460
+)
+const windowMaxSize = 65535
+
+func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) TCP {
+
+	options := make([]byte, 4)
+	if flags == FlagSYN {
+		options[0] = OPT_MSS
+		options[1] = 4
+		binary.BigEndian.PutUint16(options[2:4], MSS)
+	}
+
+	tcp := TCP{
+		SrcPort:  srcPort,
+		DestPort: destPort,
+		Seq:      seq,
+		Ack:      ack,
+		Flags:    flags,
+		Window:   windowMaxSize,
+		Checksum: 0,
+		Options:  options,
+		Data:     contents,
+		Offset:   0,
+		Urgent:   0,
+	}
 	return tcp
 }
