@@ -38,8 +38,10 @@ func main() {
 	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
 	ip := net.ParseIP("192.0.2.1")
 	ipv4 := createIPv4(uint16(len(syn.toBytes())), PROTO_TCP, []byte(ip), 0)
-
 	fmt.Println(ipv4)
+	c := syn.GenerateChecksum(ipv4)
+	fmt.Printf("gen checksum: %d\n", c)
+	fmt.Printf("expected %d", 0xc459)
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -110,11 +112,11 @@ type IPv4 struct {
 	// The header length is 20 (assuming no options), so we can hardcode the IHL to 20/4=5.
 	// Combined into one field since they're both the same byte and always the same.
 	VersIHL uint8
-	//
-	Tos uint8
+	// ToS is type of service, used to classify IP packets.
+	ToS uint8
 	// Total length of the IPv4 header + data after the header.
 	TotalLength uint16
-	// Identification
+	// Identification is a 16-bit unique for every datagram.
 	ID uint16
 	// Fragment offset, used for handling IP fragmentation.
 	FragOff uint16
@@ -135,7 +137,7 @@ func (i *IPv4) toBytes() []byte {
 	// We can create a fixed-size byte slice of 20 bytes since the IPv4 fields sum up to 20 bytes.
 	b := make([]byte, 20)
 	b[0] = i.VersIHL
-	b[1] = i.Tos
+	b[1] = i.ToS
 	binary.BigEndian.PutUint16(b[2:4], i.TotalLength)
 	binary.BigEndian.PutUint16(b[4:6], i.ID)
 	binary.BigEndian.PutUint16(b[6:8], i.FragOff)
@@ -154,7 +156,7 @@ func (i *IPv4) toBytes() []byte {
 
 func (ip IPv4) String() string {
 	return fmt.Sprintf("Version & IHL: %d\n"+
-		"TOS: %d\n"+
+		"ToS: %d\n"+
 		"Total Length: %d\n"+
 		"Identification: %d\n"+
 		"Fragment Offset: %d\n"+
@@ -164,7 +166,7 @@ func (ip IPv4) String() string {
 		"Source IP: %s\n"+
 		"Destination IP: %s\n",
 		ip.VersIHL,
-		ip.Tos,
+		ip.ToS,
 		ip.TotalLength,
 		ip.ID,
 		ip.FragOff,
@@ -181,7 +183,7 @@ func ipv4FromBytes(b []byte) (IPv4, error) {
 	}
 	ipv4 := IPv4{}
 	ipv4.VersIHL = b[0]
-	ipv4.Tos = b[1]
+	ipv4.ToS = b[1]
 	ipv4.TotalLength = binary.BigEndian.Uint16(b[2:4])
 	ipv4.ID = binary.BigEndian.Uint16(b[4:6])
 	ipv4.FragOff = binary.BigEndian.Uint16(b[6:8])
@@ -234,7 +236,7 @@ func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) 
 		// 5 is the IHL field
 		// Use bitwise OR to combine the two
 		VersIHL:     4<<4 | 5,
-		Tos:         0,
+		ToS:         0,
 		TotalLength: 20 + contentLength,
 		ID:          1,
 		FragOff:     0,
@@ -478,6 +480,16 @@ const (
 	FlagACK uint8 = 16
 )
 
+const (
+	// OptMSS is the flag for setting MSS
+	OptMSS = 2
+	// MSS is the maximum segment size. It specifies the largest amount of data in bytes (not including the TCP header)
+	// that the receiver can receive in a single TCP segment.
+	// The default is 536 for IPv4, 1220 for IPv6.
+	MSS = 1460
+)
+const windowMaxSize = 65535
+
 // TCP packets consist of a header followed by the payload.
 // The header contains of 10 fields, totaling 20 bytes.
 type TCP struct {
@@ -504,6 +516,8 @@ type TCP struct {
 	// Window is a 16-bit field specifying how many bytes the receiver is willing to receive.
 	Window uint16
 	// Checksum is a 16-bit field used to verify the integrity of the header.
+	// NOTE: The checksum includes part of the IP header, despite the IP header having its own checksum.
+	// This combination of the IP header, TCP header, and payload is called the pseudo header.
 	Checksum uint16
 	// Urgent is a 16-bit field used to indicate the data should be delivered as quickly as possible.
 	// The pointer specifies where urgent data ends. Mostly obsolete and set to 0.
@@ -572,20 +586,14 @@ func tcpFromBytes(data []byte) *TCP {
 	return tcp
 }
 
-const (
-	// OPT_MSS is the flag for setting MSS
-	OPT_MSS = 2
-	// MSS is the maximum segment size. It specifies the largest amount of data in bytes (not including the TCP header)
-	// that the receiver can receive in a single TCP segment.
-	// The default is 536 for IPv4, 1220 for IPv6.
-	MSS = 1460
-)
-const windowMaxSize = 65535
+func (t *TCP) GenerateChecksum(ipv4 IPv4) uint16 {
+	return genPseudoHeaderChecksum(ipv4, t.toBytes())
+}
 
 func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) TCP {
 	options := make([]byte, 4)
 	if flags == FlagSYN {
-		options[0] = OPT_MSS
+		options[0] = OptMSS
 		options[1] = 4
 		binary.BigEndian.PutUint16(options[2:4], MSS)
 	}
