@@ -34,14 +34,23 @@ func main() {
 	// query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
 	// destIP := "8.8.8.8"
 	// sendUDP(destIP, query)
+	tun, err := openTun("tun0")
+	if err != nil {
+		log.Fatalf("error opening tunnel: %v", err)
+	}
+	defer tun.Close()
 
+	destIP := net.ParseIP("192.0.2.1")
 	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
-	ip := net.ParseIP("192.0.2.1")
-	ipv4 := createIPv4(uint16(len(syn.toBytes())), PROTO_TCP, []byte(ip), 0)
-	fmt.Println(ipv4)
-	c := syn.GenerateChecksum(ipv4)
-	fmt.Printf("gen checksum: %d\n", c)
-	fmt.Printf("expected %d", 0xc459)
+	syn.Send(destIP, tun)
+
+	timeoutDur := 500 * time.Millisecond
+	reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	if err != nil {
+		log.Fatalf("error reading with timeout: %v", err)
+	}
+
+	fmt.Printf("response: %q", reply)
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -612,4 +621,15 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 		Urgent:   0,
 	}
 	return tcp
+}
+
+func (t *TCP) Send(destIP []byte, tun *os.File) error {
+	ipv4 := createIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
+	t.Checksum = t.GenerateChecksum(ipv4)
+	packet := append(ipv4.toBytes(), t.toBytes()...)
+	_, err := tun.Write(packet)
+	if err != nil {
+		return fmt.Errorf("error writing tcp packet: %v", err)
+	}
+	return nil
 }
