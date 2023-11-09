@@ -51,7 +51,7 @@ func main() {
 	defer tun.Close()
 
 	destIP := net.ParseIP("192.0.2.1")
-	// syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
+	// syn := NewTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
 	// err = syn.Send(destIP, tun)
 	// if err != nil {
 	// 	log.Fatalf("error sending syn: %v", err)
@@ -69,13 +69,13 @@ func main() {
 	// 	log.Fatalf("error parsing TCP response: %v", err)
 	// }
 
-	// syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
+	// syn := NewTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
 	// err = syn.Send(destIP, tun)
 	// if err != nil {
 	// 	log.Fatalf("error sending syn: %v", err)
 	// }
 
-	conn := NewTCPConnection(destIP, 8080, tun)
+	conn := NewTCPConn(destIP, 8080, tun)
 	conn.Handshake()
 	conn.SendPacket(FlagRST, nil)
 
@@ -135,7 +135,6 @@ func readWithTimeout(tun *os.File, numBytes, timeout time.Duration) ([]byte, err
 			if receivedData == nil {
 				return nil, fmt.Errorf("error reading with timeout")
 			}
-			// fmt.Printf("Data received: %v\n", receivedData)
 			return receivedData, nil
 		case <-time.After(timeout):
 			return nil, fmt.Errorf("timeout reached")
@@ -262,14 +261,14 @@ const (
 	PROTO_UDP  uint8 = 17
 )
 
-func createIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) IPv4 {
+func NewIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) *IPv4 {
 	if ttl == 0 {
 		ttl = 64
 	}
 
 	srcIP := net.ParseIP("192.0.2.2")
 
-	ipv4 := IPv4{
+	ipv4 := &IPv4{
 		// Shift 4 (0100 in binary) four spots to the left to get 01000000 to represent version 4
 		// 5 is the IHL field
 		// Use bitwise OR to combine the two
@@ -364,7 +363,7 @@ func ping(ip string, count int) (string, error) {
 
 	for i := 0; i < count; i++ {
 		p := makePing(uint16(i))
-		ipv4 := createIPv4(uint16(len(p)), PROTO_ICMP, parsedIP, 0)
+		ipv4 := NewIPv4(uint16(len(p)), PROTO_ICMP, parsedIP, 0)
 		synPacket := append(ipv4.toBytes(), p...)
 
 		start := time.Now()
@@ -430,7 +429,7 @@ func udpFromBytes(data []byte) *UDP {
 	return udp
 }
 
-func genPseudoHeaderChecksum(ipv4 IPv4, payload []byte) uint16 {
+func genPseudoHeaderChecksum(ipv4 *IPv4, payload []byte) uint16 {
 	ipv4PseudoHeader := make([]byte, 12)
 
 	copy(ipv4PseudoHeader[0:4], ipv4.Src.To4())
@@ -468,7 +467,7 @@ func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
 	}
 
 	udpBytes := udp.toBytes()
-	ipv4 := createIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
+	ipv4 := NewIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
 	udp.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
 	return append(ipv4.toBytes(), udp.toBytes()...)
 }
@@ -624,11 +623,11 @@ func tcpFromBytes(data []byte) *TCP {
 	return tcp
 }
 
-func (t *TCP) GenerateChecksum(ipv4 IPv4) uint16 {
+func (t *TCP) GenerateChecksum(ipv4 *IPv4) uint16 {
 	return genPseudoHeaderChecksum(ipv4, t.toBytes())
 }
 
-func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) TCP {
+func NewTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) *TCP {
 	options := make([]byte, 4)
 	if flags == FlagSYN {
 		options[0] = OptMSS
@@ -636,7 +635,7 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 		binary.BigEndian.PutUint16(options[2:4], MSS)
 	}
 
-	tcp := TCP{
+	tcp := &TCP{
 		SrcPort:  srcPort,
 		DestPort: destPort,
 		Seq:      seq,
@@ -653,7 +652,7 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 }
 
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
-	ipv4 := createIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
+	ipv4 := NewIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
 	t.Checksum = t.GenerateChecksum(ipv4)
 	packet := append(ipv4.toBytes(), t.toBytes()...)
 	_, err := tun.Write(packet)
@@ -697,7 +696,7 @@ func parseTCPresponse(resp []byte) (*IPv4, *TCP, error) {
 	return ipv4, tcp, nil
 }
 
-type TCPConnection struct {
+type TCPConn struct {
 	SrcPort  uint16
 	SrcIP    net.IP
 	DestPort uint16
@@ -709,12 +708,12 @@ type TCPConnection struct {
 	State    string
 }
 
-func NewTCPConnection(destIP []byte, destPort uint16, tun *os.File) *TCPConnection {
+func NewTCPConn(destIP []byte, destPort uint16, tun *os.File) *TCPConn {
 	randSrcPort := uint16(rand.Intn(maxUint16Val))
 	randSeq := uint32(rand.Intn(maxUint32Val))
 	srcIP := net.ParseIP("192.0.2.2")
 
-	return &TCPConnection{
+	return &TCPConn{
 		SrcPort:  randSrcPort,
 		SrcIP:    srcIP,
 		DestPort: destPort,
@@ -726,8 +725,8 @@ func NewTCPConnection(destIP []byte, destPort uint16, tun *os.File) *TCPConnecti
 	}
 }
 
-func (c *TCPConnection) SendPacket(flags uint8, contents []byte) error {
-	packet := createTCP(flags, c.SrcPort, c.DestPort, c.Seq, c.Ack, contents)
+func (c *TCPConn) SendPacket(flags uint8, contents []byte) error {
+	packet := NewTCP(flags, c.SrcPort, c.DestPort, c.Seq, c.Ack, contents)
 	err := packet.Send(c.DestIP, c.Tun)
 	if err != nil {
 		return fmt.Errorf("error sending packet: %v", err)
@@ -735,7 +734,7 @@ func (c *TCPConnection) SendPacket(flags uint8, contents []byte) error {
 	return nil
 }
 
-func (c *TCPConnection) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
+func (c *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 	for {
 		resp, err := readWithTimeout(c.Tun, 1024, timeoutDur)
 		if err != nil {
@@ -757,7 +756,7 @@ func (c *TCPConnection) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 	}
 }
 
-func (c *TCPConnection) Handshake() error {
+func (c *TCPConn) Handshake() error {
 	c.SendPacket(FlagSYN, nil)
 
 	reply, err := c.ReadPacket(1000)
