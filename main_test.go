@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,25 @@ func hexToBytes(hexStr string) []byte {
 		return nil
 	}
 	return hexBytes
+}
+
+// go test -run TestPing
+
+func TestPing(t *testing.T) {
+	ip := "192.0.2.1"
+	count := 10
+
+	actual, err := ping(ip, count)
+	if err != nil {
+		t.Errorf("error pinging: %v", err)
+	}
+	expectedSubstrings := []string{"response from: 192.0.2.1 ", "ttl=64"}
+
+	for _, s := range expectedSubstrings {
+		if !strings.Contains(actual, s) {
+			t.Errorf("Expected substring '%s' not found in output:\n%s", s, actual)
+		}
+	}
 }
 
 func TestUDP(t *testing.T) {

@@ -34,8 +34,11 @@ const (
 
 func main() {
 
-	// tunDeviceIP := "192.0.2.1"
-	// ping(tunDeviceIP, 10)
+	// ip := "192.0.2.1"
+	// output, err := ping(ip, 10)
+	// if err != nil {
+	// 	log.Fatalf("error pinging: %v", err)
+	// }
 
 	// query := []byte("D\xcb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01")
 	// destIP := "8.8.8.8"
@@ -349,7 +352,8 @@ func makePing(seq uint16) []byte {
 	return icmp.toBytes()
 }
 
-func ping(ip string, count int) error {
+func ping(ip string, count int) (string, error) {
+	var output string
 	parsedIP := net.ParseIP(ip)
 
 	tun, err := openTun("tun0")
@@ -379,9 +383,9 @@ func ping(ip string, count int) error {
 		}
 		elapsedMS := time.Since(start).Seconds() * 1000
 		response := icmpFromBytes(reply[20:])
-		fmt.Printf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.TTL, elapsedMS)
+		output = fmt.Sprintf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.TTL, elapsedMS)
 	}
-	return nil
+	return output, nil
 }
 
 // UDP datagrams consist of a header followed by the payload.
