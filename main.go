@@ -55,40 +55,13 @@ func main() {
 	}
 
 	fmt.Printf("response: %q\n\n", reply)
-	// got: E\x00\x00(\x00\x00@\x00@\x06\xb6\xcc\xc0\x00\x02\x01\xc0\x00\x02\x02\x1f\x9009\x00\x00\x00\x00\x00\x00\x00\x01P\x14\x00\x00\xdc\x02\x00\x00
-	// exp: E\x00\x00,\x00\x00@\x00@\x06\xb6\xc8\xc0\x00\x02\x01\xc0\x00\x02\x02\x1f\x90095JJ\x98\x00\x00\x00\x01`\x12\xfa\xf0Iu\x00\x00\x02\x04\x05\xb4
 	ipv4, tcp, err := parseTCPresponse(reply)
 	if err != nil {
 		log.Fatalf("error parsing TCP response: %v", err)
 	}
 
 	fmt.Println(ipv4)
-	// total length should be 44, but getting 40
-	// checksum should be 46792, but geting 46796
 	fmt.Println(tcp)
-	/*
-		Source Port: 8080
-		Destination Port: 12345
-		Seq: 0
-		Ack: 1
-		Offset: 20
-		Flags: 20
-		Window: 0
-		Checksum: 56322
-		Urgent: 0
-		Options: "\x1f\x9009\x00\x00\x00\x00\x00\x00\x00\x01P\x14\x00\x00\xdc\x02\x00\x00"
-		Data: ""
-
-		dif from expected:
-
-		seq=894061208
-		offset=96
-		flags=18
-		window=64240
-		checksum=18805
-		options=b'\x02\x04\x05\xb4'
-
-	*/
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -416,7 +389,7 @@ type UDP struct {
 
 func (u *UDP) toBytes() []byte {
 	header := make([]byte, 8)
-	binary.BigEndian.PutUint16(header[0:2], u.SrcPort)
+	binary.BigEndian.PutUint16(header[:2], u.SrcPort)
 	binary.BigEndian.PutUint16(header[2:4], u.DestPort)
 
 	length := uint16(len(u.Contents) + 8)
@@ -431,7 +404,7 @@ func udpFromBytes(data []byte) *UDP {
 
 	header := data[:8]
 	payload := data[8:]
-	udp.SrcPort = binary.BigEndian.Uint16(header[0:2])
+	udp.SrcPort = binary.BigEndian.Uint16(header[:2])
 	udp.DestPort = binary.BigEndian.Uint16(header[2:4])
 	udp.Length = binary.BigEndian.Uint16(header[4:6])
 	udp.Checksum = binary.BigEndian.Uint16(header[6:8])
@@ -582,7 +555,7 @@ func (t *TCP) toBytes() []byte {
 	tcpLen := headerLen + len(t.Data)
 	b := make([]byte, tcpLen)
 
-	binary.BigEndian.PutUint16(b[0:2], t.SrcPort)
+	binary.BigEndian.PutUint16(b[:2], t.SrcPort)
 	binary.BigEndian.PutUint16(b[2:4], t.DestPort)
 	binary.BigEndian.PutUint32(b[4:8], t.Seq)
 	binary.BigEndian.PutUint32(b[8:12], t.Ack)
@@ -594,7 +567,6 @@ func (t *TCP) toBytes() []byte {
 
 	// Left shift by 4 (multiply by 16) to get offset value for the header length in terms of words.
 	b[12] = uint8(headerLenInWords<<4) | 0
-	fmt.Printf("%v\n", b[12])
 	b[13] = t.Flags
 	binary.BigEndian.PutUint16(b[14:16], t.Window)
 	binary.BigEndian.PutUint16(b[16:18], t.Checksum)
@@ -609,25 +581,27 @@ func (t *TCP) toBytes() []byte {
 func tcpFromBytes(data []byte) *TCP {
 	tcp := &TCP{}
 
-	headerBytes := data[:20]
+	tcp.SrcPort = binary.BigEndian.Uint16(data[:2])
+	tcp.DestPort = binary.BigEndian.Uint16(data[2:4])
+	tcp.Seq = binary.BigEndian.Uint32(data[4:8])
+	tcp.Ack = binary.BigEndian.Uint32(data[8:12])
 
-	tcp.SrcPort = binary.BigEndian.Uint16(headerBytes[0:2])
-	tcp.DestPort = binary.BigEndian.Uint16(headerBytes[2:4])
-	tcp.Seq = binary.BigEndian.Uint32(headerBytes[4:8])
-	tcp.Ack = binary.BigEndian.Uint32(headerBytes[8:12])
+	tcp.Offset = data[12] // offset value in 32-bit 'words'
+	tcp.Flags = data[13]
 
-	// Right shift by 4 (divide by 16) to get offset value for the header length in bytes
-	headerLen := uint8(headerBytes[12]) >> 4
-	tcp.Offset = headerLen * 4
-	tcp.Flags = headerBytes[13]
+	tcp.Window = binary.BigEndian.Uint16(data[14:16])
+	tcp.Checksum = binary.BigEndian.Uint16(data[16:18])
+	tcp.Urgent = binary.BigEndian.Uint16(data[18:20])
 
-	tcp.Window = binary.BigEndian.Uint16(headerBytes[14:16])
-	tcp.Checksum = binary.BigEndian.Uint16(headerBytes[16:18])
-	tcp.Urgent = binary.BigEndian.Uint16(headerBytes[18:20])
+	// Right shift by 4 (divide by 16) to convert the offset value from 32-bit 'words' to 8-bit bytes as each word is 4 bytes (32 bits)
+	// Then multiply by 4 to get the actual length in bytes.
+	offsetInBytes := (tcp.Offset >> 4) * 4
+	optionsSize := (offsetInBytes - 20)
+	fixedHeaderSize := 20
+	totalHeaderSize := fixedHeaderSize + int(optionsSize)
 
-	// optionsStart := tcp.Offset - 20
-	// tcp.Options = headerBytes[optionsStart:tcp.Offset]
-	// tcp.Data = headerBytes[tcp.Offset:]
+	tcp.Options = data[fixedHeaderSize:totalHeaderSize]
+	tcp.Data = data[totalHeaderSize:]
 
 	return tcp
 }
@@ -662,7 +636,6 @@ func createTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents 
 
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
 	ipv4 := createIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
-	fmt.Println("ipv4", ipv4)
 	t.Checksum = t.GenerateChecksum(ipv4)
 	packet := append(ipv4.toBytes(), t.toBytes()...)
 	_, err := tun.Write(packet)
