@@ -34,7 +34,7 @@ type IPv4 struct {
 	Dest net.IP
 }
 
-func (i *IPv4) toBytes() []byte {
+func (i *IPv4) Bytes() []byte {
 	// We can create a fixed-size byte slice of 20 bytes since the IPv4 fields sum up to 20 bytes.
 	b := make([]byte, 20)
 	b[0] = i.VersIHL
@@ -82,20 +82,20 @@ func ipv4FromBytes(b []byte) (*IPv4, error) {
 	if len(b) < 20 {
 		return &IPv4{}, errors.New("input bytes is less than 20 bytes")
 	}
-	ipv4 := IPv4{}
 
-	ipv4.VersIHL = b[0]
-	ipv4.ToS = b[1]
-	ipv4.TotalLength = binary.BigEndian.Uint16(b[2:4])
-	ipv4.ID = binary.BigEndian.Uint16(b[4:6])
-	ipv4.FragOff = binary.BigEndian.Uint16(b[6:8])
-	ipv4.TTL = b[8]
-	ipv4.Protocol = b[9]
-	ipv4.Checksum = binary.BigEndian.Uint16(b[10:12])
-	ipv4.Src = net.IP(b[12:16]).To4()
-	ipv4.Dest = net.IP(b[16:20]).To4()
-
-	return &ipv4, nil
+	ipv4 := &IPv4{
+		VersIHL:     b[0],
+		ToS:         b[1],
+		TotalLength: binary.BigEndian.Uint16(b[2:4]),
+		ID:          binary.BigEndian.Uint16(b[4:6]),
+		FragOff:     binary.BigEndian.Uint16(b[6:8]),
+		TTL:         b[8],
+		Protocol:    b[9],
+		Checksum:    binary.BigEndian.Uint16(b[10:12]),
+		Src:         net.IP(b[12:16]).To4(),
+		Dest:        net.IP(b[16:20]).To4(),
+	}
+	return ipv4, nil
 }
 
 func NewIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) *IPv4 {
@@ -120,6 +120,6 @@ func NewIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) *IP
 		Src:         srcIP.To4(),
 		Dest:        destIP,
 	}
-	ipv4.Checksum = generateChecksum(ipv4.toBytes())
+	ipv4.Checksum = generateChecksum(ipv4.Bytes())
 	return ipv4
 }

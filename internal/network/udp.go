@@ -24,7 +24,7 @@ type UDP struct {
 	Contents []byte
 }
 
-func (u *UDP) toBytes() []byte {
+func (u *UDP) Bytes() []byte {
 	header := make([]byte, 8)
 	binary.BigEndian.PutUint16(header[:2], u.SrcPort)
 	binary.BigEndian.PutUint16(header[2:4], u.DestPort)
@@ -37,31 +37,16 @@ func (u *UDP) toBytes() []byte {
 }
 
 func udpFromBytes(data []byte) *UDP {
-	udp := &UDP{}
-
 	header := data[:8]
 	payload := data[8:]
-	udp.SrcPort = binary.BigEndian.Uint16(header[:2])
-	udp.DestPort = binary.BigEndian.Uint16(header[2:4])
-	udp.Length = binary.BigEndian.Uint16(header[4:6])
-	udp.Checksum = binary.BigEndian.Uint16(header[6:8])
-	udp.Contents = payload
-	return udp
-}
 
-func genPseudoHeaderChecksum(ipv4 *IPv4, payload []byte) uint16 {
-	ipv4PseudoHeader := make([]byte, 12)
-
-	copy(ipv4PseudoHeader[0:4], ipv4.Src.To4())
-	copy(ipv4PseudoHeader[4:8], ipv4.Dest.To4())
-
-	ipv4PseudoHeader[8] = 0 // technically the ToS field typically set to 0
-	ipv4PseudoHeader[9] = ipv4.Protocol
-	binary.BigEndian.PutUint16(ipv4PseudoHeader[10:12], ipv4.TotalLength-20)
-
-	pseudoHeader := append(ipv4PseudoHeader, payload...)
-
-	return generateChecksum(pseudoHeader)
+	return &UDP{
+		SrcPort:  binary.BigEndian.Uint16(header[:2]),
+		DestPort: binary.BigEndian.Uint16(header[2:4]),
+		Length:   binary.BigEndian.Uint16(header[4:6]),
+		Checksum: binary.BigEndian.Uint16(header[6:8]),
+		Contents: payload,
+	}
 }
 
 func (u *UDP) String() string {
@@ -86,10 +71,10 @@ func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
 		Contents: contents,
 	}
 
-	udpBytes := udp.toBytes()
+	udpBytes := udp.Bytes()
 	ipv4 := NewIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
 	udp.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
-	return append(ipv4.toBytes(), udp.toBytes()...)
+	return append(ipv4.Bytes(), udp.Bytes()...)
 }
 
 func SendUDP(destIP string, query []byte) (*IPv4, *UDP, []byte, error) {

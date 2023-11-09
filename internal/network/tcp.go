@@ -29,6 +29,8 @@ const (
 	// that the receiver can receive in a single TCP segment.
 	// The default is 536 for IPv4, 1220 for IPv6.
 	MSS = 1460
+
+	TCPConnStateEstablished = "ESTABLISHED"
 )
 
 const (
@@ -37,7 +39,7 @@ const (
 )
 
 // TCP packets consist of a header followed by the payload.
-// The header contains of 10 fields, totaling 20 bytes.
+// The header consists of 10 required fields of fixed size (20 bytes), and optional options (up to 40 bytes)
 type TCP struct {
 	// SrcPort is a 16-bit field specifying port of the device sending the data. Can be 0 if no reply is needed.
 	SrcPort uint16
@@ -52,10 +54,9 @@ type TCP struct {
 	// Offset is a 4-bit field specifying the number of 32-bit 'words' in the header, used to indicate where the payload data begins.
 	// For historical reasons, the conventional unit used is 'word'. Each word is 4 bytes, so we need to divide by 4 to get length of the TCP header in bytes.
 	// Defaulted to 0 since it'll be automatically calculated.
+	// There is also typically a 4-bit 'Reserved' field for future uses that is set to 0.
+	// Combining with offset in this implementation.
 	Offset uint8
-	//
-	// Reserved is a 4-bit field for future uses, should be set to 0.
-	//
 	// Flags (aka control bits) is an 8-bit field for flags used to establish/terminate connections and send data.
 	// The flags are: CWR, ECE, URG, ACK, PSH, RST, SYN, and FIN
 	Flags uint8
@@ -74,7 +75,7 @@ type TCP struct {
 	Data []byte
 }
 
-func (t *TCP) toBytes() []byte {
+func (t *TCP) Bytes() []byte {
 	// 20 = known fixed size of header w/o options
 	headerLen := 20 + len(t.Options)
 	tcpLen := headerLen + len(t.Data)
@@ -131,10 +132,6 @@ func tcpFromBytes(data []byte) *TCP {
 	return tcp
 }
 
-func (t *TCP) GenerateChecksum(ipv4 *IPv4) uint16 {
-	return genPseudoHeaderChecksum(ipv4, t.toBytes())
-}
-
 func NewTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) *TCP {
 	options := make([]byte, 4)
 	if flags == FlagSYN {
@@ -160,9 +157,9 @@ func NewTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []b
 }
 
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
-	ipv4 := NewIPv4(uint16(len(t.toBytes())), PROTO_TCP, destIP, 0)
-	t.Checksum = t.GenerateChecksum(ipv4)
-	packet := append(ipv4.toBytes(), t.toBytes()...)
+	ipv4 := NewIPv4(uint16(len(t.Bytes())), PROTO_TCP, destIP, 0)
+	t.Checksum = genPseudoHeaderChecksum(ipv4, t.Bytes())
+	packet := append(ipv4.Bytes(), t.Bytes()...)
 	_, err := tun.Write(packet)
 	if err != nil {
 		return fmt.Errorf("error writing tcp packet: %v", err)
@@ -249,8 +246,6 @@ func (c *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 			return nil, fmt.Errorf("error reading with timeout: %v", err)
 		}
 
-		fmt.Printf("response: %q\n\n", resp)
-
 		respIP, respTCP, err := ParseTCPresponse(resp)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing TCP response: %v", err)
@@ -275,7 +270,7 @@ func (c *TCPConn) Handshake() error {
 	c.Seq = reply.Ack
 	c.Ack = reply.Seq + 1
 	c.SendPacket(FlagACK, nil)
-	c.State = "ESTABLISHED"
+	c.State = TCPConnStateEstablished
 
 	return nil
 }

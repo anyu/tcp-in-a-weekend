@@ -33,7 +33,6 @@ func main() {
 		log.Fatalf("error reading with timeout: %v", err)
 	}
 
-	fmt.Printf("response: %q\n\n", reply)
 	ipv4, tcp, err := network.ParseTCPresponse(reply)
 	if err != nil {
 		log.Fatalf("error parsing TCP response: %v", err)

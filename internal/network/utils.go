@@ -110,3 +110,18 @@ func generateChecksum(data []byte) uint16 {
 	// invert results within the lower bits (& 0xFFFF ensures only the lower bits are used for the checksum)
 	return uint16(^result & 0xFFFF)
 }
+
+func genPseudoHeaderChecksum(ipv4 *IPv4, payload []byte) uint16 {
+	ipv4PseudoHeader := make([]byte, 12)
+
+	copy(ipv4PseudoHeader[0:4], ipv4.Src.To4())
+	copy(ipv4PseudoHeader[4:8], ipv4.Dest.To4())
+
+	ipv4PseudoHeader[8] = 0 // technically the ToS field typically set to 0
+	ipv4PseudoHeader[9] = ipv4.Protocol
+	binary.BigEndian.PutUint16(ipv4PseudoHeader[10:12], ipv4.TotalLength-20)
+
+	pseudoHeader := append(ipv4PseudoHeader, payload...)
+
+	return generateChecksum(pseudoHeader)
+}

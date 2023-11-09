@@ -21,7 +21,7 @@ type ICMPEcho struct {
 	Seq uint16
 }
 
-func (i ICMPEcho) toBytes() []byte {
+func (i *ICMPEcho) Bytes() []byte {
 	b := make([]byte, 8)
 	b[0] = i.Type
 	b[1] = i.Code
@@ -32,8 +32,8 @@ func (i ICMPEcho) toBytes() []byte {
 	return b
 }
 
-func icmpFromBytes(data []byte) ICMPEcho {
-	icmp := ICMPEcho{}
+func NewICMPFromBytes(data []byte) *ICMPEcho {
+	icmp := &ICMPEcho{}
 
 	icmp.Type = data[0]
 	icmp.Code = data[1]
@@ -44,7 +44,7 @@ func icmpFromBytes(data []byte) ICMPEcho {
 	return icmp
 }
 
-func (icmp ICMPEcho) String() string {
+func (icmp *ICMPEcho) String() string {
 	return fmt.Sprintf(
 		"Type: %d\n"+
 			"Code: %d\n"+
@@ -67,8 +67,8 @@ func makePing(seq uint16) []byte {
 		ID:       12345,
 		Seq:      seq,
 	}
-	icmp.Checksum = generateChecksum(icmp.toBytes())
-	return icmp.toBytes()
+	icmp.Checksum = generateChecksum(icmp.Bytes())
+	return icmp.Bytes()
 }
 
 func Ping(ip string, count int) ([]string, error) {
@@ -84,7 +84,7 @@ func Ping(ip string, count int) ([]string, error) {
 	for i := 0; i < count; i++ {
 		p := makePing(uint16(i))
 		ipv4 := NewIPv4(uint16(len(p)), PROTO_ICMP, parsedIP, 0)
-		synPacket := append(ipv4.toBytes(), p...)
+		synPacket := append(ipv4.Bytes(), p...)
 
 		start := time.Now()
 		_, err := tun.Write(synPacket)
@@ -101,7 +101,7 @@ func Ping(ip string, count int) ([]string, error) {
 			return nil, fmt.Errorf("error unpacking ipv4 from bytes: %v", err)
 		}
 		elapsedMS := time.Since(start).Seconds() * 1000
-		response := icmpFromBytes(reply[20:])
+		response := NewICMPFromBytes(reply[20:])
 		resps = append(resps, fmt.Sprintf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.TTL, elapsedMS))
 	}
 	return resps, nil

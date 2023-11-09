@@ -95,7 +95,7 @@
 // 	ip := net.ParseIP("192.0.2.1")
 
 // 	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
-// 	ipv4 := createIPv4(uint16(len(syn.toBytes())), PROTO_TCP, []byte(ip), 0)
+// 	ipv4 := createIPv4(uint16(len(syn.Bytes())), PROTO_TCP, []byte(ip), 0)
 // 	actual := syn.GenerateChecksum(ipv4)
 // 	expected := uint16(0xc459)
 
