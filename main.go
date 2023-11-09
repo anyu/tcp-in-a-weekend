@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"time"
@@ -26,6 +27,11 @@ const (
 	LINUX_TUNSETIFF = 0x400454CA
 )
 
+const (
+	maxUint16Val = 2 ^ 16 - 1
+	maxUint32Val = 2 ^ 32 - 1
+)
+
 func main() {
 
 	// tunDeviceIP := "192.0.2.1"
@@ -42,26 +48,34 @@ func main() {
 	defer tun.Close()
 
 	destIP := net.ParseIP("192.0.2.1")
-	syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
-	err = syn.Send(destIP, tun)
-	if err != nil {
-		log.Fatalf("error sending syn: %v", err)
-	}
+	// syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
+	// err = syn.Send(destIP, tun)
+	// if err != nil {
+	// 	log.Fatalf("error sending syn: %v", err)
+	// }
 
-	timeoutDur := 500 * time.Millisecond
-	reply, err := readWithTimeout(tun, 1024, timeoutDur)
-	if err != nil {
-		log.Fatalf("error reading with timeout: %v", err)
-	}
+	// timeoutDur := 500 * time.Millisecond
+	// reply, err := readWithTimeout(tun, 1024, timeoutDur)
+	// if err != nil {
+	// 	log.Fatalf("error reading with timeout: %v", err)
+	// }
 
-	fmt.Printf("response: %q\n\n", reply)
-	ipv4, tcp, err := parseTCPresponse(reply)
-	if err != nil {
-		log.Fatalf("error parsing TCP response: %v", err)
-	}
+	// fmt.Printf("response: %q\n\n", reply)
+	// ipv4, tcp, err := parseTCPresponse(reply)
+	// if err != nil {
+	// 	log.Fatalf("error parsing TCP response: %v", err)
+	// }
 
-	fmt.Println(ipv4)
-	fmt.Println(tcp)
+	// syn := createTCP(FlagSYN, uint16(12345), uint16(8080), uint32(0), uint32(0), []byte{})
+	// err = syn.Send(destIP, tun)
+	// if err != nil {
+	// 	log.Fatalf("error sending syn: %v", err)
+	// }
+
+	conn := NewTCPConnection(destIP, 8080, tun)
+	conn.Handshake()
+	conn.SendPacket(FlagRST, nil)
+
 }
 
 func openTun(tunName string) (*os.File, error) {
@@ -677,4 +691,80 @@ func parseTCPresponse(resp []byte) (*IPv4, *TCP, error) {
 	}
 	tcp := tcpFromBytes(resp[20:])
 	return ipv4, tcp, nil
+}
+
+type TCPConnection struct {
+	SrcPort  uint16
+	SrcIP    net.IP
+	DestPort uint16
+	DestIP   net.IP
+	Ack      uint32
+	Seq      uint32
+	Tun      *os.File
+	Data     []byte
+	State    string
+}
+
+func NewTCPConnection(destIP []byte, destPort uint16, tun *os.File) *TCPConnection {
+	randSrcPort := uint16(rand.Intn(maxUint16Val))
+	randSeq := uint32(rand.Intn(maxUint32Val))
+	srcIP := net.ParseIP("192.0.2.2")
+
+	return &TCPConnection{
+		SrcPort:  randSrcPort,
+		SrcIP:    srcIP,
+		DestPort: destPort,
+		DestIP:   destIP,
+		Tun:      tun,
+		Ack:      0,
+		// The sequence number is randomized for security (TCP sequence number randomization)
+		Seq: randSeq,
+	}
+}
+
+func (c *TCPConnection) SendPacket(flags uint8, contents []byte) error {
+	packet := createTCP(flags, c.SrcPort, c.DestPort, c.Seq, c.Ack, contents)
+	err := packet.Send(c.DestIP, c.Tun)
+	if err != nil {
+		return fmt.Errorf("error sending packet: %v", err)
+	}
+	return nil
+}
+
+func (c *TCPConnection) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
+	for {
+		resp, err := readWithTimeout(c.Tun, 1024, timeoutDur)
+		if err != nil {
+			log.Fatalf("error reading with timeout: %v", err)
+		}
+
+		fmt.Printf("response: %q\n\n", resp)
+
+		respIP, respTCP, err := parseTCPresponse(resp)
+		if err != nil {
+			log.Fatalf("error parsing TCP response: %v", err)
+		}
+		// ignore packets from the wrong TCP connection
+		if respIP.Src.Equal(c.DestIP) &&
+			respTCP.DestPort == c.SrcPort &&
+			respTCP.SrcPort == c.DestPort {
+			return respTCP, nil
+		}
+	}
+}
+
+func (c *TCPConnection) Handshake() error {
+	c.SendPacket(FlagSYN, nil)
+
+	reply, err := c.ReadPacket(1000)
+	if err != nil {
+		return fmt.Errorf("error reading packet: %v", err)
+	}
+
+	c.Seq = reply.Ack
+	c.Ack = reply.Seq + 1
+	c.SendPacket(FlagACK, nil)
+	c.State = "ESTABLISHED"
+
+	return nil
 }

@@ -31,6 +31,13 @@ Otherwise, will get a reset response.
 
 ### Helpful tools
 
+1. tcpdump
+```sh
+sudo tcpdump -ni tun0
+
+sudo tcpdump -ni tun0 host 192.0.2.1
+```
+
 1. tshark, terminal Wireshark
 ```sh
 sudo tshark -f "tcp port 12345" -i tun0 -w dump.pcap
