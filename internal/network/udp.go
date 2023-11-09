@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// UDP datagrams consist of a header followed by the payload.
-// The header contains of four 2-byte fields, totaling 8 bytes.
+// UDP represents a datagram consisting of an 8-byte header followed by the payload.
 type UDP struct {
 	// SrcPort is port of the device sending the data. Can be 0 if no reply is needed.
 	SrcPort uint16
@@ -24,6 +23,7 @@ type UDP struct {
 	Contents []byte
 }
 
+// Bytes serializes a UDP datagram into a byte slice.
 func (u *UDP) Bytes() []byte {
 	header := make([]byte, 8)
 	binary.BigEndian.PutUint16(header[:2], u.SrcPort)
@@ -36,6 +36,7 @@ func (u *UDP) Bytes() []byte {
 	return append(header, u.Contents...)
 }
 
+// udpFromBytes deserializes a byte slice into a UDP datagram.
 func udpFromBytes(data []byte) *UDP {
 	header := data[:8]
 	payload := data[8:]
@@ -49,6 +50,7 @@ func udpFromBytes(data []byte) *UDP {
 	}
 }
 
+// String returns a string representation of a UDP datagram.
 func (u *UDP) String() string {
 	return fmt.Sprintf("Source Port: %d\n"+
 		"Destination Port: %d\n"+
@@ -62,31 +64,38 @@ func (u *UDP) String() string {
 		u.Contents)
 }
 
-func createUDP(ip net.IP, srcPort, destPort uint16, contents []byte) []byte {
-	udp := UDP{
+func NewUDP(ip net.IP, srcPort, destPort uint16, contents []byte) *UDP {
+	return &UDP{
 		SrcPort:  srcPort,
 		DestPort: destPort,
 		Length:   0,
 		Checksum: 0,
 		Contents: contents,
 	}
-
-	udpBytes := udp.Bytes()
-	ipv4 := NewIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
-	udp.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
-	return append(ipv4.Bytes(), udp.Bytes()...)
 }
 
-func SendUDP(destIP string, query []byte) (*IPv4, *UDP, []byte, error) {
-	ipBytes := net.ParseIP(destIP)
-	udp := createUDP(ipBytes, 12345, 53, query)
+func (u *UDP) encodeInIPv4(ip net.IP) []byte {
+	udpBytes := u.Bytes()
+	ipv4 := NewIPv4(uint16(len(udpBytes)), PROTO_UDP, ip, 64)
+	u.Checksum = genPseudoHeaderChecksum(ipv4, udpBytes)
+	return append(ipv4.Bytes(), u.Bytes()...)
+}
 
+// SendUDP sends a UDP request and receives the corresponding reply for the specified IP.
+func SendUDP(destIP string, query []byte) (*IPv4, *UDP, []byte, error) {
+	ip := net.ParseIP(destIP)
+	srcPort := uint16(12345)
+	destPort := uint16(53)
+
+	udp := NewUDP(ip, srcPort, destPort, query)
+
+	wrappedUDP := udp.encodeInIPv4(ip)
 	tun, err := OpenTun("tun0")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error opening tunnel: %v", err)
 	}
 	defer tun.Close()
-	_, err = tun.Write(udp)
+	_, err = tun.Write(wrappedUDP)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error writing syn packet: %v", err)
 	}
@@ -102,7 +111,7 @@ func SendUDP(destIP string, query []byte) (*IPv4, *UDP, []byte, error) {
 		return nil, nil, nil, fmt.Errorf("error reading ipv4: %v", err)
 	}
 	udpReply := udpFromBytes(reply[20:])
-	ip := udpReply.Contents[len(udpReply.Contents)-4:]
+	replyIP := udpReply.Contents[len(udpReply.Contents)-4:]
 
-	return ipv4Reply, udpReply, ip, nil
+	return ipv4Reply, udpReply, replyIP, nil
 }

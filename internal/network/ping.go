@@ -7,21 +7,24 @@ import (
 	"time"
 )
 
-// ICMP packets have an 8-byte header and variable-sized data section
-type ICMPEcho struct {
-	// Type identifies whether the packet is an echo (ping) or an echo reply (ping reply)
+const ICMPTypeEchoRequest = 8
+
+// ICMP packets have an 8-byte header (first 4 bytes are fixed) and variable-sized data section.
+type ICMP struct {
+	// Type identifies what the packet is used for and determines the format of the remaining data.
 	Type uint8
-	// Code is always 0 (TODO: given id/seq conditions though, could it ever be not 0?)
+	// Code gives additional context for the message. If type is Echo Request/Reply, code is 0.
 	Code uint8
-	// Checksum is used to verify the integrity of the packet
+	// Checksum is used to verify the integrity of the packet.
 	Checksum uint16
-	// ID is used to help match echoes and replies, if the code field is 0
+	// ID is used to help match echoes and replies, if the code field is 0.
 	ID uint16
-	// Seq is used to help match echoes and replies, if the code field is 0
+	// Seq is used to help match echoes and replies, if the code field is 0.
 	Seq uint16
 }
 
-func (i *ICMPEcho) Bytes() []byte {
+// Bytes serializes ICMP packet fields into a byte slice.
+func (i *ICMP) Bytes() []byte {
 	b := make([]byte, 8)
 	b[0] = i.Type
 	b[1] = i.Code
@@ -32,19 +35,19 @@ func (i *ICMPEcho) Bytes() []byte {
 	return b
 }
 
-func NewICMPFromBytes(data []byte) *ICMPEcho {
-	icmp := &ICMPEcho{}
-
-	icmp.Type = data[0]
-	icmp.Code = data[1]
-	icmp.Checksum = binary.BigEndian.Uint16(data[2:4])
-	icmp.ID = binary.BigEndian.Uint16(data[4:6])
-	icmp.Seq = binary.BigEndian.Uint16(data[6:8])
-
-	return icmp
+// icmpFromBytes deserializes a byte slice into an ICMP packet.
+func icmpFromBytes(data []byte) *ICMP {
+	return &ICMP{
+		Type:     data[0],
+		Code:     data[1],
+		Checksum: binary.BigEndian.Uint16(data[2:4]),
+		ID:       binary.BigEndian.Uint16(data[4:6]),
+		Seq:      binary.BigEndian.Uint16(data[6:8]),
+	}
 }
 
-func (icmp *ICMPEcho) String() string {
+// String returns a string representation of an ICMP packet.
+func (icmp *ICMP) String() string {
 	return fmt.Sprintf(
 		"Type: %d\n"+
 			"Code: %d\n"+
@@ -60,8 +63,8 @@ func (icmp *ICMPEcho) String() string {
 }
 
 func makePing(seq uint16) []byte {
-	icmp := ICMPEcho{
-		Type:     8,
+	icmp := ICMP{
+		Type:     ICMPTypeEchoRequest,
 		Code:     0,
 		Checksum: 0,
 		ID:       12345,
@@ -71,8 +74,9 @@ func makePing(seq uint16) []byte {
 	return icmp.Bytes()
 }
 
-func Ping(ip string, count int) ([]string, error) {
-	parsedIP := net.ParseIP(ip)
+// Ping sends ICMP echo requests (ping) and receives corresponding ICMP echo replies for the specified iP.
+func Ping(destIP string, count int) ([]string, error) {
+	ip := net.ParseIP(destIP)
 
 	tun, err := OpenTun("tun0")
 	if err != nil {
@@ -83,13 +87,15 @@ func Ping(ip string, count int) ([]string, error) {
 	var resps []string
 	for i := 0; i < count; i++ {
 		p := makePing(uint16(i))
-		ipv4 := NewIPv4(uint16(len(p)), PROTO_ICMP, parsedIP, 0)
-		synPacket := append(ipv4.Bytes(), p...)
+
+		// Wrap ping contents in IPv4 header
+		ipv4 := NewIPv4(uint16(len(p)), PROTO_ICMP, ip, 0)
+		packet := append(ipv4.Bytes(), p...)
 
 		start := time.Now()
-		_, err := tun.Write(synPacket)
+		_, err := tun.Write(packet)
 		if err != nil {
-			return nil, fmt.Errorf("error writing syn packet: %v", err)
+			return nil, fmt.Errorf("error writing packet: %v", err)
 		}
 		reply := make([]byte, 1024)
 		_, err = tun.Read(reply)
@@ -98,10 +104,10 @@ func Ping(ip string, count int) ([]string, error) {
 		}
 		replyIP, err := ipv4FromBytes(reply[:20])
 		if err != nil {
-			return nil, fmt.Errorf("error unpacking ipv4 from bytes: %v", err)
+			return nil, fmt.Errorf("error deserializing ipv4 from bytes: %v", err)
 		}
 		elapsedMS := time.Since(start).Seconds() * 1000
-		response := NewICMPFromBytes(reply[20:])
+		response := icmpFromBytes(reply[20:])
 		resps = append(resps, fmt.Sprintf("response from: %s icmp_seq=%d ttl=%d time=%.3f ms\n", ip, response.Seq, replyIP.TTL, elapsedMS))
 	}
 	return resps, nil

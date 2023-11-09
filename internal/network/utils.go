@@ -9,7 +9,7 @@ import (
 	"unsafe"
 )
 
-// Linux TUN/TAP device flags. TUN (network TUNnel)
+// Linux TUN/TAP device flags.
 const (
 	// Flag that indicates the device is a TUN device.
 	LINUX_IFF_TUN = 0x0001
