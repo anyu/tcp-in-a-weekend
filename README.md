@@ -16,3 +16,23 @@ Install Go:
 2. `tar -C /usr/local -xzf go1.XX.X.linux-amd64.tar.gz`
 3. `export PATH=$PATH:/usr/local/go/bin`
 4. `go version`
+
+## Usage
+
+### Ping
+
+```sh
+go run cmd/ping/main.go 192.0.2.1
+```
+
+### UDP
+
+```sh
+go run cmd/udp/main.go 8.8.8.8
+```
+
+### TCP
+
+```sh
+go run cmd/tcp/main.go 192.0.2.1
+```
