@@ -34,8 +34,8 @@ const (
 )
 
 const (
-	maxUint16Val = 2 ^ 16 - 1 // 65535
-	maxUint32Val = 2 ^ 32 - 1
+	maxUint16Val = 1<<16 - 1 // 65535
+	maxUint32Val = 1<<32 - 1 // 4294967295
 )
 
 // TCP packets consist of a header followed by the payload.
