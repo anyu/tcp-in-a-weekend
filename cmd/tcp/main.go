@@ -16,17 +16,18 @@ func main() {
 	}
 	defer tun.Close()
 
-	conn := network.NewTCPConn(destIP, 8080, tun)
-	conn.Handshake()
-
-	conn.SendData([]byte("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"), 10)
+	socket := network.NewTCPSocket(destIP, 8080, tun)
+	socket.SendAll([]byte("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"), 10)
 
 	var response []byte
 
-	for conn.State != network.TCPConnStateClosed {
-		data, err := conn.ReceiveData(1024)
+	for {
+		data, err := socket.Receive(1024)
 		if err != nil {
-			log.Fatalf("error receiving data: %v", err)
+			log.Fatalf("error receiving data from socket: %v", err)
+		}
+		if len(data) == 0 {
+			break
 		}
 		response = append(response, data...)
 	}

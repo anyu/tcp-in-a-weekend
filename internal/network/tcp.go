@@ -385,6 +385,35 @@ func (td *TCPData) Read(amount int) []byte {
 	return data
 }
 
+type TCPSocket struct {
+	Conn *TCPConn
+}
+
+func NewTCPSocket(destIP net.IP, port uint16, tun *os.File) *TCPSocket {
+	conn := NewTCPConn(destIP, 8080, tun)
+	conn.Handshake()
+
+	return &TCPSocket{
+		Conn: conn,
+	}
+}
+
+func (s *TCPSocket) SendAll(data []byte, retries int) error {
+	err := s.Conn.SendData(data, retries)
+	if err != nil {
+		return fmt.Errorf("error sending data:%v", err)
+	}
+	return nil
+}
+
+func (s *TCPSocket) Receive(numBytes int) ([]byte, error) {
+	data, err := s.Conn.ReceiveData(numBytes)
+	if err != nil {
+		return nil, fmt.Errorf("error receiving data:%v", err)
+	}
+	return data, nil
+}
+
 // func DrainPackets(tun *os.File) ([]*TCP, error) {
 // 	packets := []*TCP{}
 // 	for {
