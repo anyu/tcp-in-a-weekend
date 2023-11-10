@@ -31,6 +31,7 @@ const (
 	MSS = 1460
 
 	TCPConnStateEstablished = "ESTABLISHED"
+	TCPConnStateClosed      = "CLOSED"
 )
 
 const (
@@ -209,7 +210,7 @@ type TCPConn struct {
 	Ack      uint32
 	Seq      uint32
 	Tun      *os.File
-	Data     []byte
+	Data     TCPData
 	State    string
 }
 
@@ -262,7 +263,8 @@ func (c *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 func (c *TCPConn) Handshake() error {
 	c.SendPacket(FlagSYN, nil)
 
-	reply, err := c.ReadPacket(1000)
+	readTimeout := 1000 * time.Millisecond
+	reply, err := c.ReadPacket(readTimeout)
 	if err != nil {
 		return fmt.Errorf("error reading packet: %v", err)
 	}
@@ -289,9 +291,12 @@ func (c *TCPConn) SendData(data []byte, retries int) error {
 		}
 		c.Seq += uint32(len(part))
 
+		// Use simple backoff for retrying packet sending
 		backoff := 500 * time.Millisecond
+		readTimeout := 1000 * time.Millisecond
+
 		for i := 0; i < retries; i++ {
-			reply, err := c.ReadPacket(1000)
+			reply, err := c.ReadPacket(readTimeout)
 			if err != nil {
 				return fmt.Errorf("error reading packet: %v", err)
 			}
@@ -305,6 +310,79 @@ func (c *TCPConn) SendData(data []byte, retries int) error {
 		}
 	}
 	return nil
+}
+
+func (c *TCPConn) ReceiveData(amount int) ([]byte, error) {
+	// Keep receiving packets if connection isn't closed and there's no data in buffer
+	for c.State != TCPConnStateClosed && c.Data.AvailableBytes() == 0 {
+		err := c.HandlePacket()
+		if err != nil {
+			return nil, fmt.Errorf("error handing packet: %v", err)
+		}
+	}
+	return c.Data.Read(amount), nil
+}
+
+func (c *TCPConn) HandlePacket() error {
+	packet, err := c.ReadPacket(1000)
+	if err != nil {
+		return fmt.Errorf("error reading packet: %v", err)
+	}
+
+	// Ignore non-matching packets
+	if packet.Seq != c.Ack {
+		return nil
+	}
+
+	// Add new packets with data, update and send ACK
+	if c.State == TCPConnStateEstablished && len(packet.Data) > 0 {
+		c.Data.Add(packet.Data)
+		c.Ack = packet.Seq + uint32(len(packet.Data))
+		err := c.SendPacket(FlagACK, []byte{})
+		if err != nil {
+			return fmt.Errorf("error sending packet: %v", err)
+		}
+	}
+
+	// Close connection on FIN
+	if packet.Flags&FlagFIN != 0 {
+		c.State = TCPConnStateClosed
+	}
+	return nil
+}
+
+// TCPData represents a TCP data buffer.
+type TCPData struct {
+	Received []byte
+	ReadPtr  int
+}
+
+// Add appends data to the buffer.
+func (td *TCPData) Add(data []byte) {
+	td.Received = append(td.Received, data...)
+}
+
+// AvailableBytes returns the number of available bytes left for reading.
+func (td *TCPData) AvailableBytes() int {
+	return len(td.Received) - td.ReadPtr
+}
+
+// Read reads the specified amount of data from the buffer.
+func (td *TCPData) Read(amount int) []byte {
+	// If pointer is already at the end, return an empty slice
+	if td.ReadPtr >= len(td.Received) {
+		return nil
+	}
+
+	part := td.ReadPtr + amount
+	if part > len(td.Received) {
+		// If the part's index exceeds the length, adjust it to the end
+		part = len(td.Received)
+	}
+
+	data := td.Received[td.ReadPtr:part]
+	td.ReadPtr += len(data)
+	return data
 }
 
 // func DrainPackets(tun *os.File) ([]*TCP, error) {

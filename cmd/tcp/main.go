@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
 
 	network "tcp-in-a-weekend/internal/network"
 )
@@ -20,12 +19,16 @@ func main() {
 	conn := network.NewTCPConn(destIP, 8080, tun)
 	conn.Handshake()
 
-	conn.SendData([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"), 10)
-	time.Sleep(1)
+	conn.SendData([]byte("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"), 10)
 
-	tcp, err := conn.ReadPacket(1000)
-	if err != nil {
-		log.Fatalf("error reading packet: %v", err)
+	var response []byte
+
+	for conn.State != network.TCPConnStateClosed {
+		data, err := conn.ReceiveData(1024)
+		if err != nil {
+			log.Fatalf("error receiving data: %v", err)
+		}
+		response = append(response, data...)
 	}
-	fmt.Println(tcp)
+	fmt.Println(string(response))
 }
