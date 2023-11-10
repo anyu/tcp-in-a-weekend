@@ -274,3 +274,58 @@ func (c *TCPConn) Handshake() error {
 
 	return nil
 }
+
+func (c *TCPConn) SendData(data []byte, retries int) error {
+	for i := 0; i < len(data); i += MSS {
+		end := i + MSS
+		if end > len(data) {
+			end = len(data)
+		}
+		part := data[i:end]
+
+		err := c.SendPacket(FlagPSH|FlagACK, part)
+		if err != nil {
+			return fmt.Errorf("error sending packet: %v", err)
+		}
+		c.Seq += uint32(len(part))
+
+		backoff := 500 * time.Millisecond
+		for i := 0; i < retries; i++ {
+			reply, err := c.ReadPacket(1000)
+			if err != nil {
+				return fmt.Errorf("error reading packet: %v", err)
+			}
+			if reply.Ack == c.Seq {
+				break
+			} else {
+				c.SendPacket(FlagPSH|FlagACK, part)
+				time.Sleep(backoff)
+				backoff = backoff * 2
+			}
+		}
+	}
+	return nil
+}
+
+// func DrainPackets(tun *os.File) ([]*TCP, error) {
+// 	packets := []*TCP{}
+// 	for {
+// 		resp, err := ReadWithTimeout(tun, 1024, 1)
+// 		if err != nil {
+// 			fmt.Printf("error")
+// 			// if errors.Is(err, TimeoutError{}) {
+// 			// 	fmt.Printf("timeout exceeded")
+// 			// 	break
+// 			// }
+// 			return nil, fmt.Errorf("error reading: %v", err)
+// 		}
+// 		_, tcp, err := ParseTCPresponse(resp)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("error parsing tcp response: %v", err)
+// 		}
+// 		fmt.Println("heyyyyy")
+// 		packets = append(packets, tcp)
+// 		return packets, nil
+// 	}
+// 	return packets, nil
+// }
