@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const hardcodedSrcIP = "192.0.2.2"
-
 const (
 	maxUint16Val = 1<<16 - 1 // 65535
 	maxUint32Val = 1<<32 - 1 // 4294967295
@@ -133,6 +131,7 @@ func (t *TCP) Bytes() []byte {
 	return b
 }
 
+// tcpFromBytes deserializes a byte slice into a TCP packet.
 func tcpFromBytes(data []byte) *TCP {
 	tcp := &TCP{}
 
@@ -161,6 +160,7 @@ func tcpFromBytes(data []byte) *TCP {
 	return tcp
 }
 
+// Send packages a TCP packet with an IPv4 header, generates a checksum, and sends the packet to the network tunnel.
 func (t *TCP) Send(destIP []byte, tun *os.File) error {
 	ipv4 := NewIPv4(uint16(len(t.Bytes())), PROTO_TCP, destIP, 0)
 	t.Checksum = genPseudoHeaderChecksum(ipv4, t.Bytes())
@@ -172,6 +172,7 @@ func (t *TCP) Send(destIP []byte, tun *os.File) error {
 	return nil
 }
 
+// String returns a string representation of a TCP packet.
 func (t *TCP) String() string {
 	return fmt.Sprintf("Source Port: %d\n"+
 		"Destination Port: %d\n"+
@@ -197,6 +198,7 @@ func (t *TCP) String() string {
 		t.Data)
 }
 
+// ParseTCPresponse deserializes a TCP response into IPv4 and TCP structures.
 func ParseTCPresponse(resp []byte) (*IPv4, *TCP, error) {
 	ipv4, err := ipv4FromBytes(resp[:20])
 	if err != nil {
@@ -206,6 +208,7 @@ func ParseTCPresponse(resp []byte) (*IPv4, *TCP, error) {
 	return ipv4, tcp, nil
 }
 
+// TCPConn represents a TCP connection.
 type TCPConn struct {
 	SrcPort  uint16
 	SrcIP    net.IP
@@ -218,6 +221,7 @@ type TCPConn struct {
 	State    string
 }
 
+// NewTCPConn creates a new TCPConn instance.
 func NewTCPConn(destIP string, destPort uint16, tun *os.File) *TCPConn {
 	randSrcPort := uint16(rand.Intn(maxUint16Val))
 	randSeq := uint32(rand.Intn(maxUint32Val))
@@ -236,6 +240,7 @@ func NewTCPConn(destIP string, destPort uint16, tun *os.File) *TCPConn {
 	}
 }
 
+// SendPacket sends a TCP packet with the provided contents.
 func (conn *TCPConn) SendPacket(flags uint8, contents []byte) error {
 	packet := NewTCP(flags, conn.SrcPort, conn.DestPort, conn.Seq, conn.Ack, contents)
 	err := packet.Send(conn.DestIP, conn.Tun)
@@ -245,6 +250,7 @@ func (conn *TCPConn) SendPacket(flags uint8, contents []byte) error {
 	return nil
 }
 
+// ReadPacket reads a TCP packet from the established TCP connection,
 func (conn *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 	for {
 		resp, err := ReadWithTimeout(conn.Tun, 1024, timeoutDur)
@@ -265,6 +271,8 @@ func (conn *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 	}
 }
 
+// Handshake initiates the 3-way TCP handshake(sending SYN, receiving ACK, and sending SYN-ACK)
+// and marks the connection as established.
 func (conn *TCPConn) Handshake() error {
 	conn.SendPacket(FlagSYN, nil)
 
@@ -282,6 +290,7 @@ func (conn *TCPConn) Handshake() error {
 	return nil
 }
 
+// SendData sends the provided data over the established TCP connection, retrying via exponential backoff.
 func (conn *TCPConn) SendData(data []byte, retries int) error {
 	for i := 0; i < len(data); i += MSS {
 		end := i + MSS
@@ -296,7 +305,7 @@ func (conn *TCPConn) SendData(data []byte, retries int) error {
 		}
 		conn.Seq += uint32(len(part))
 
-		// Use simple backoff for retrying packet sending
+		// Use exponential backoff for retrying packet sending
 		backoff := 500 * time.Millisecond
 		readTimeout := 1000 * time.Millisecond
 
@@ -310,13 +319,14 @@ func (conn *TCPConn) SendData(data []byte, retries int) error {
 			} else {
 				conn.SendPacket(FlagPSH|FlagACK, part)
 				time.Sleep(backoff)
-				backoff = backoff * 2
+				backoff *= 2
 			}
 		}
 	}
 	return nil
 }
 
+// ReceiveData reads the specified amount of data from the established TCP connection.
 func (conn *TCPConn) ReceiveData(amount int) ([]byte, error) {
 	// Keep receiving packets if connection isn't closed and there's no data in buffer
 	for conn.State != TCPConnStateClosed && conn.Data.AvailableBytes() == 0 {
@@ -328,6 +338,7 @@ func (conn *TCPConn) ReceiveData(amount int) ([]byte, error) {
 	return conn.Data.Read(amount), nil
 }
 
+// HandlePacket processes incoming packets on the established TCP connection.
 func (conn *TCPConn) HandlePacket() error {
 	packet, err := conn.ReadPacket(1000)
 	if err != nil {

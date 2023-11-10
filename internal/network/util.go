@@ -9,6 +9,8 @@ import (
 	"unsafe"
 )
 
+const hardcodedSrcIP = "192.0.2.2"
+
 // Linux TUN/TAP device flags.
 const (
 	// Flag that indicates the device is a TUN device.

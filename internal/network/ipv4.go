@@ -41,7 +41,7 @@ func NewIPv4(contentLength uint16, protocol uint8, destIP []byte, ttl uint8) *IP
 		ttl = 64
 	}
 
-	srcIP := net.ParseIP("192.0.2.2")
+	srcIP := net.ParseIP(hardcodedSrcIP)
 
 	ipv4 := &IPv4{
 		// Shift 4 (0100 in binary) four spots to the left to get 01000000 to represent version 4
