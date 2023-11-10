@@ -3,13 +3,18 @@ package main
 import (
 	"fmt"
 	"log"
-	"net"
+	"os"
 
 	network "tcp-in-a-weekend/internal/network"
 )
 
 func main() {
-	destIP := net.ParseIP("192.0.2.1")
+	if len(os.Args) < 2 {
+		fmt.Println("Provide a destination IP")
+		return
+	}
+	destIP := os.Args[1]
+
 	tun, err := network.OpenTun("tun0")
 	if err != nil {
 		log.Fatalf("error opening tunnel: %v", err)

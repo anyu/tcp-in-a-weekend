@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+const hardcodedSrcIP = "192.0.2.2"
+
+const (
+	maxUint16Val = 1<<16 - 1 // 65535
+	maxUint32Val = 1<<32 - 1 // 4294967295
+)
+
 const (
 	// FlagFIN is used to gracefully terminate the TCP connection.
 	FlagFIN uint8 = 1
@@ -29,14 +36,11 @@ const (
 	// that the receiver can receive in a single TCP segment.
 	// The default is 536 for IPv4, 1220 for IPv6.
 	MSS = 1460
-
-	TCPConnStateEstablished = "ESTABLISHED"
-	TCPConnStateClosed      = "CLOSED"
 )
 
 const (
-	maxUint16Val = 1<<16 - 1 // 65535
-	maxUint32Val = 1<<32 - 1 // 4294967295
+	TCPConnStateEstablished = "ESTABLISHED"
+	TCPConnStateClosed      = "CLOSED"
 )
 
 // TCP packets consist of a header followed by the payload.
@@ -74,6 +78,30 @@ type TCP struct {
 	Options []byte
 	// Data is the contents of the packet.
 	Data []byte
+}
+
+func NewTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) *TCP {
+	options := make([]byte, 4)
+	if flags == FlagSYN {
+		options[0] = OptMSS
+		options[1] = 4
+		binary.BigEndian.PutUint16(options[2:4], MSS)
+	}
+
+	tcp := &TCP{
+		SrcPort:  srcPort,
+		DestPort: destPort,
+		Seq:      seq,
+		Ack:      ack,
+		Flags:    flags,
+		Window:   maxUint16Val,
+		Checksum: 0,
+		Options:  options,
+		Data:     contents,
+		Offset:   0,
+		Urgent:   0,
+	}
+	return tcp
 }
 
 func (t *TCP) Bytes() []byte {
@@ -130,30 +158,6 @@ func tcpFromBytes(data []byte) *TCP {
 	tcp.Options = data[fixedHeaderSize:totalHeaderSize]
 	tcp.Data = data[totalHeaderSize:]
 
-	return tcp
-}
-
-func NewTCP(flags uint8, srcPort, destPort uint16, seq, ack uint32, contents []byte) *TCP {
-	options := make([]byte, 4)
-	if flags == FlagSYN {
-		options[0] = OptMSS
-		options[1] = 4
-		binary.BigEndian.PutUint16(options[2:4], MSS)
-	}
-
-	tcp := &TCP{
-		SrcPort:  srcPort,
-		DestPort: destPort,
-		Seq:      seq,
-		Ack:      ack,
-		Flags:    flags,
-		Window:   maxUint16Val,
-		Checksum: 0,
-		Options:  options,
-		Data:     contents,
-		Offset:   0,
-		Urgent:   0,
-	}
 	return tcp
 }
 
@@ -214,16 +218,17 @@ type TCPConn struct {
 	State    string
 }
 
-func NewTCPConn(destIP []byte, destPort uint16, tun *os.File) *TCPConn {
+func NewTCPConn(destIP string, destPort uint16, tun *os.File) *TCPConn {
 	randSrcPort := uint16(rand.Intn(maxUint16Val))
 	randSeq := uint32(rand.Intn(maxUint32Val))
-	srcIP := net.ParseIP("192.0.2.2")
+	parsedSrcIP := net.ParseIP(hardcodedSrcIP)
+	parsedDestIP := net.ParseIP(destIP)
 
 	return &TCPConn{
 		SrcPort:  randSrcPort,
-		SrcIP:    srcIP,
+		SrcIP:    parsedSrcIP,
 		DestPort: destPort,
-		DestIP:   destIP,
+		DestIP:   parsedDestIP,
 		Tun:      tun,
 		Ack:      0,
 		// The sequence number is randomized for security (TCP sequence number randomization)
@@ -231,18 +236,18 @@ func NewTCPConn(destIP []byte, destPort uint16, tun *os.File) *TCPConn {
 	}
 }
 
-func (c *TCPConn) SendPacket(flags uint8, contents []byte) error {
-	packet := NewTCP(flags, c.SrcPort, c.DestPort, c.Seq, c.Ack, contents)
-	err := packet.Send(c.DestIP, c.Tun)
+func (conn *TCPConn) SendPacket(flags uint8, contents []byte) error {
+	packet := NewTCP(flags, conn.SrcPort, conn.DestPort, conn.Seq, conn.Ack, contents)
+	err := packet.Send(conn.DestIP, conn.Tun)
 	if err != nil {
 		return fmt.Errorf("error sending packet: %v", err)
 	}
 	return nil
 }
 
-func (c *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
+func (conn *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 	for {
-		resp, err := ReadWithTimeout(c.Tun, 1024, timeoutDur)
+		resp, err := ReadWithTimeout(conn.Tun, 1024, timeoutDur)
 		if err != nil {
 			return nil, fmt.Errorf("error reading with timeout: %v", err)
 		}
@@ -252,32 +257,32 @@ func (c *TCPConn) ReadPacket(timeoutDur time.Duration) (*TCP, error) {
 			return nil, fmt.Errorf("error parsing TCP response: %v", err)
 		}
 		// ignore packets from the wrong TCP connection
-		if respIP.Src.Equal(c.DestIP) &&
-			respTCP.DestPort == c.SrcPort &&
-			respTCP.SrcPort == c.DestPort {
+		if respIP.Src.Equal(conn.DestIP) &&
+			respTCP.DestPort == conn.SrcPort &&
+			respTCP.SrcPort == conn.DestPort {
 			return respTCP, nil
 		}
 	}
 }
 
-func (c *TCPConn) Handshake() error {
-	c.SendPacket(FlagSYN, nil)
+func (conn *TCPConn) Handshake() error {
+	conn.SendPacket(FlagSYN, nil)
 
 	readTimeout := 1000 * time.Millisecond
-	reply, err := c.ReadPacket(readTimeout)
+	reply, err := conn.ReadPacket(readTimeout)
 	if err != nil {
 		return fmt.Errorf("error reading packet: %v", err)
 	}
 
-	c.Seq = reply.Ack
-	c.Ack = reply.Seq + 1
-	c.SendPacket(FlagACK, nil)
-	c.State = TCPConnStateEstablished
+	conn.Seq = reply.Ack
+	conn.Ack = reply.Seq + 1
+	conn.SendPacket(FlagACK, nil)
+	conn.State = TCPConnStateEstablished
 
 	return nil
 }
 
-func (c *TCPConn) SendData(data []byte, retries int) error {
+func (conn *TCPConn) SendData(data []byte, retries int) error {
 	for i := 0; i < len(data); i += MSS {
 		end := i + MSS
 		if end > len(data) {
@@ -285,25 +290,25 @@ func (c *TCPConn) SendData(data []byte, retries int) error {
 		}
 		part := data[i:end]
 
-		err := c.SendPacket(FlagPSH|FlagACK, part)
+		err := conn.SendPacket(FlagPSH|FlagACK, part)
 		if err != nil {
 			return fmt.Errorf("error sending packet: %v", err)
 		}
-		c.Seq += uint32(len(part))
+		conn.Seq += uint32(len(part))
 
 		// Use simple backoff for retrying packet sending
 		backoff := 500 * time.Millisecond
 		readTimeout := 1000 * time.Millisecond
 
 		for i := 0; i < retries; i++ {
-			reply, err := c.ReadPacket(readTimeout)
+			reply, err := conn.ReadPacket(readTimeout)
 			if err != nil {
 				return fmt.Errorf("error reading packet: %v", err)
 			}
-			if reply.Ack == c.Seq {
+			if reply.Ack == conn.Seq {
 				break
 			} else {
-				c.SendPacket(FlagPSH|FlagACK, part)
+				conn.SendPacket(FlagPSH|FlagACK, part)
 				time.Sleep(backoff)
 				backoff = backoff * 2
 			}
@@ -312,33 +317,33 @@ func (c *TCPConn) SendData(data []byte, retries int) error {
 	return nil
 }
 
-func (c *TCPConn) ReceiveData(amount int) ([]byte, error) {
+func (conn *TCPConn) ReceiveData(amount int) ([]byte, error) {
 	// Keep receiving packets if connection isn't closed and there's no data in buffer
-	for c.State != TCPConnStateClosed && c.Data.AvailableBytes() == 0 {
-		err := c.HandlePacket()
+	for conn.State != TCPConnStateClosed && conn.Data.AvailableBytes() == 0 {
+		err := conn.HandlePacket()
 		if err != nil {
 			return nil, fmt.Errorf("error handing packet: %v", err)
 		}
 	}
-	return c.Data.Read(amount), nil
+	return conn.Data.Read(amount), nil
 }
 
-func (c *TCPConn) HandlePacket() error {
-	packet, err := c.ReadPacket(1000)
+func (conn *TCPConn) HandlePacket() error {
+	packet, err := conn.ReadPacket(1000)
 	if err != nil {
 		return fmt.Errorf("error reading packet: %v", err)
 	}
 
 	// Ignore non-matching packets
-	if packet.Seq != c.Ack {
+	if packet.Seq != conn.Ack {
 		return nil
 	}
 
 	// Add new packets with data, update and send ACK
-	if c.State == TCPConnStateEstablished && len(packet.Data) > 0 {
-		c.Data.Add(packet.Data)
-		c.Ack = packet.Seq + uint32(len(packet.Data))
-		err := c.SendPacket(FlagACK, []byte{})
+	if conn.State == TCPConnStateEstablished && len(packet.Data) > 0 {
+		conn.Data.Add(packet.Data)
+		conn.Ack = packet.Seq + uint32(len(packet.Data))
+		err := conn.SendPacket(FlagACK, []byte{})
 		if err != nil {
 			return fmt.Errorf("error sending packet: %v", err)
 		}
@@ -346,7 +351,7 @@ func (c *TCPConn) HandlePacket() error {
 
 	// Close connection on FIN
 	if packet.Flags&FlagFIN != 0 {
-		c.State = TCPConnStateClosed
+		conn.State = TCPConnStateClosed
 	}
 	return nil
 }
@@ -386,20 +391,20 @@ func (td *TCPData) Read(amount int) []byte {
 }
 
 type TCPSocket struct {
-	Conn *TCPConn
+	conn *TCPConn
 }
 
-func NewTCPSocket(destIP net.IP, port uint16, tun *os.File) *TCPSocket {
+func NewTCPSocket(destIP string, port uint16, tun *os.File) *TCPSocket {
 	conn := NewTCPConn(destIP, 8080, tun)
 	conn.Handshake()
 
 	return &TCPSocket{
-		Conn: conn,
+		conn: conn,
 	}
 }
 
 func (s *TCPSocket) SendAll(data []byte, retries int) error {
-	err := s.Conn.SendData(data, retries)
+	err := s.conn.SendData(data, retries)
 	if err != nil {
 		return fmt.Errorf("error sending data:%v", err)
 	}
@@ -407,32 +412,9 @@ func (s *TCPSocket) SendAll(data []byte, retries int) error {
 }
 
 func (s *TCPSocket) Receive(numBytes int) ([]byte, error) {
-	data, err := s.Conn.ReceiveData(numBytes)
+	data, err := s.conn.ReceiveData(numBytes)
 	if err != nil {
 		return nil, fmt.Errorf("error receiving data:%v", err)
 	}
 	return data, nil
 }
-
-// func DrainPackets(tun *os.File) ([]*TCP, error) {
-// 	packets := []*TCP{}
-// 	for {
-// 		resp, err := ReadWithTimeout(tun, 1024, 1)
-// 		if err != nil {
-// 			fmt.Printf("error")
-// 			// if errors.Is(err, TimeoutError{}) {
-// 			// 	fmt.Printf("timeout exceeded")
-// 			// 	break
-// 			// }
-// 			return nil, fmt.Errorf("error reading: %v", err)
-// 		}
-// 		_, tcp, err := ParseTCPresponse(resp)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("error parsing tcp response: %v", err)
-// 		}
-// 		fmt.Println("heyyyyy")
-// 		packets = append(packets, tcp)
-// 		return packets, nil
-// 	}
-// 	return packets, nil
-// }
